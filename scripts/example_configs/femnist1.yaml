@@ -4,27 +4,27 @@ early_stop:
   patience: 5
 seed: 12345
 federate:
-  client_num: 20
+  client_num: 5
   mode: standalone
-  total_round_num: 200
+  total_round_num: 300
   sample_client_rate: 0.2
 data:
-  splitter: iid
-  # splitter_args: [{'client_num': 200}]
-  type: AID
+  root: data/
+  type: femnist
   splits: [0.6,0.2,0.2]
   subsample: 0.05
-  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.9637], 'std': [0.1592]}]]
 dataloader:
   batch_size: 10
 model:
   type: ViT
-  out_channels: 30
+  hidden: 2048
+  out_channels: 62
 train:
   local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.001
+    lr: 0.01
     weight_decay: 0.0
 grad:
   grad_clip: 5.0
@@ -33,5 +33,5 @@ criterion:
 trainer:
   type: cvtrainer
 eval:
-  freq: 1
+  freq: 10
   metrics: ['acc', 'correct']
