@@ -3,6 +3,8 @@ doc/build
 
 # ml log
 wandb/
+/data/
+/exp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
