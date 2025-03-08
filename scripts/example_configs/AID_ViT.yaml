@@ -6,7 +6,7 @@ seed: 12345
 federate:
   client_num: 20
   mode: standalone
-  total_round_num: 200
+  total_round_num: 400
   sample_client_rate: 0.2
 data:
   splitter: iid
