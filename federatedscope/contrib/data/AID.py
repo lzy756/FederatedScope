@@ -67,8 +67,8 @@ def apply_split_transform(full_dataset, idx_list, transform):
 
 def load_my_data(config, client_cfgs=None):
     # 标准化参数（与预训练模型匹配）
-    pretrained_mean = [0.485, 0.456, 0.406]
-    pretrained_std = [0.229, 0.224, 0.225]
+    pretrained_mean = [0.5, 0.5, 0.5]
+    pretrained_std = [0.5, 0.5, 0.5]
 
     # 定义变换策略
     train_transform = transforms.Compose([
