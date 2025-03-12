@@ -4,9 +4,9 @@ early_stop:
   patience: 5
 seed: 12345
 federate:
-  client_num: 20
+  client_num: 30
   mode: standalone
-  total_round_num: 400
+  total_round_num: 4000
   sample_client_rate: 0.2
 data:
   splitter: iid
@@ -16,7 +16,7 @@ data:
   subsample: 0.05
   # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
 dataloader:
-  batch_size: 10
+  batch_size: 64
 model:
   type: ViT
   out_channels: 30
@@ -33,5 +33,5 @@ criterion:
 trainer:
   type: cvtrainer
 eval:
-  freq: 1
+  freq: 100
   metrics: ['acc', 'correct']
