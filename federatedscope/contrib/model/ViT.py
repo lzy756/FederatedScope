@@ -24,33 +24,26 @@ def load_my_net(model_config, local_data):
         cache_dir="./pretrained_models"  # 自定义缓存路径
     )
 
-    # ---- 选择性冻结参数（示例冻结所有非分类层）----
-    # if model_config.get("freeze_backbone", True):
-    print("[模型配置] 冻结特征提取器，仅训练分类头")
-    # 区分特征层和分类头参数
-    for param in model.vit.parameters():  # vit部分为特征提取器
-        param.requires_grad = False
-    for param in model.classifier.parameters():
-        param.requires_grad = True
-
-    # 推荐在解冻状态下训练BatchNorm
-    def unfreeze_bn_params(module):
-        if isinstance(module, nn.BatchNorm2d):
-            for param in module.parameters():
-                param.requires_grad = True
-
-    model.apply(unfreeze_bn_params)
-
-    # ---- 学习率分层配置（示例）----
-    # 注：需要在联邦优化器中配合param_groups实现差异化学习率
-    # if model_config.get("differential_lr", False):
-    #     model.param_groups = [{
-    #         'params': model.vit.parameters(),
-    #         'lr': model_config.lr * 0.1
-    #     }, {
-    #         'params': model.classifier.parameters(),
-    #         'lr': model_config.lr
-    #     }]
+    # ---- 参数冻结与解冻 ----
+    unfreeze_keys = [
+        "embeddings.position",  # 位置嵌入
+        "encoder.layer.9",  # 最后3层Transformer块
+        "encoder.layer.10",
+        "encoder.layer.11",
+        "classifier"  # 分类头
+    ]
+    for name, param in model.named_parameters():
+        if any(key in name for key in unfreeze_keys):
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
+    # ---- 参数审计 ----
+    print("\n----- 可训练参数审计 -----")
+    trainable_params = sum(p.numel() for p in model.parameters()
+                           if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"可训练参数: {trainable_params} / {total_params} "
+          f"({trainable_params/total_params:.2%})")
 
     return model
 
