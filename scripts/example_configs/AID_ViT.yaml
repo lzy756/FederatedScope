@@ -21,8 +21,8 @@ model:
   type: ViT
   out_channels: 30
 train:
-  local_update_steps: 32
-  batch_or_epoch: batch
+  local_update_steps: 1
+  batch_or_epoch: epoch
   optimizer:
     type: Adam
     lr: 2e-4 

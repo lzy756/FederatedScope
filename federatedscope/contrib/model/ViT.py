@@ -2,6 +2,9 @@ import torch
 from torch import nn
 from transformers import ViTForImageClassification, ViTConfig
 from federatedscope.register import register_model
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CustomViTForImageClassification(ViTForImageClassification):
@@ -38,12 +41,12 @@ def load_my_net(model_config, local_data):
         else:
             param.requires_grad = False
     # ---- 参数审计 ----
-    print("\n----- 可训练参数审计 -----")
+    logger.info("\n----- 可训练参数审计 -----")
     trainable_params = sum(p.numel() for p in model.parameters()
                            if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"可训练参数: {trainable_params} / {total_params} "
-          f"({trainable_params/total_params:.2%})")
+    logger.info(f"可训练参数: {trainable_params} / {total_params} "
+                f"({trainable_params/total_params:.2%})")
 
     return model
 
