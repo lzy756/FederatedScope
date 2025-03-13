@@ -36,3 +36,4 @@ trainer:
 eval:
   freq: 10
   metrics: ['acc', 'correct']
+  count_flops: False
