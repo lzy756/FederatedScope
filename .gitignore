@@ -137,3 +137,11 @@ dmypy.json
 .idea/
 
 **/.DS_Store
+
+
+#         
+data/
+exp/
+toy_data/
+log/
+tests/test_resnet18_cifar100_one.py

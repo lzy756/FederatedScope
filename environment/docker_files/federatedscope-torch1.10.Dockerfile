@@ -4,8 +4,8 @@
 # based on the nvidia-docker
 # NOTE: please pre-install the NVIDIA drivers and `nvidia-docker2` in the host machine,
 # see details in https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
-FROM nvidia/cuda:11.3.1-runtime-ubuntu20.04
-
+# FROM nvidia/cuda:11.3.1-runtime-ubuntu20.04
+FROM dockerpull.cn/nvidia/cuda:11.3.1-runtime-ubuntu20.04
 # change bash as default
 SHELL ["/bin/bash", "-c"]
 
