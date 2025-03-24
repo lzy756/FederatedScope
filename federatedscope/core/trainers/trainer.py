@@ -5,8 +5,10 @@ import logging
 from federatedscope.core.trainers.base_trainer import BaseTrainer
 from federatedscope.core.trainers.enums import MODE, LIFECYCLE
 from federatedscope.core.auxiliaries.decorators import use_diff
-from federatedscope.core.trainers.utils import format_log_hooks, \
-    filter_by_specified_keywords
+from federatedscope.core.trainers.utils import (
+    format_log_hooks,
+    filter_by_specified_keywords,
+)
 from federatedscope.core.trainers.context import Context, CtxVar, lifecycle
 
 logger = logging.getLogger(__name__)
@@ -14,21 +16,21 @@ logger = logging.getLogger(__name__)
 
 class Trainer(BaseTrainer):
     """
-        Register, organize and run the train/test/val procedures
+    Register, organize and run the train/test/val procedures
     """
 
     HOOK_TRIGGER = [
-        "on_fit_start", "on_epoch_start", "on_batch_start", "on_batch_forward",
-        "on_batch_backward", "on_batch_end", "on_epoch_end", "on_fit_end"
+        "on_fit_start",
+        "on_epoch_start",
+        "on_batch_start",
+        "on_batch_forward",
+        "on_batch_backward",
+        "on_batch_end",
+        "on_epoch_end",
+        "on_fit_end",
     ]
 
-    def __init__(self,
-                 model,
-                 data,
-                 device,
-                 config,
-                 only_for_eval=False,
-                 monitor=None):
+    def __init__(self, model, data, device, config, only_for_eval=False, monitor=None):
         self._cfg = config
 
         self.ctx = Context(model, self.cfg, data, device)
@@ -36,8 +38,9 @@ class Trainer(BaseTrainer):
         # Parse data and setup init vars in ctx
         self._setup_data_related_var_in_ctx(self.ctx)
 
-        assert monitor is not None, \
-            f"Monitor not found in trainer with class {type(self)}"
+        assert (
+            monitor is not None
+        ), f"Monitor not found in trainer with class {type(self)}"
         self.ctx.monitor = monitor
         # the "model_nums", and "models" are used for multi-model case and
         # model size calculation
@@ -63,7 +66,7 @@ class Trainer(BaseTrainer):
             self.register_default_hooks_ft()
         self.register_default_hooks_eval()
 
-        if self.cfg.federate.mode == 'distributed':
+        if self.cfg.federate.mode == "distributed":
             self.print_trainer_meta_info()
         else:
             # in standalone mode, by default, we print the trainer info only
@@ -114,113 +117,115 @@ class Trainer(BaseTrainer):
 
     def reset_hook_in_train(self, target_trigger, target_hook_name=None):
         hooks_dict = self.hooks_in_train
-        del_one_hook_idx = self._reset_hook_in_trigger(hooks_dict,
-                                                       target_hook_name,
-                                                       target_trigger)
+        del_one_hook_idx = self._reset_hook_in_trigger(
+            hooks_dict, target_hook_name, target_trigger
+        )
         return del_one_hook_idx
 
     def reset_hook_in_eval(self, target_trigger, target_hook_name=None):
         hooks_dict = self.hooks_in_eval
-        del_one_hook_idx = self._reset_hook_in_trigger(hooks_dict,
-                                                       target_hook_name,
-                                                       target_trigger)
+        del_one_hook_idx = self._reset_hook_in_trigger(
+            hooks_dict, target_hook_name, target_trigger
+        )
         return del_one_hook_idx
 
-    def replace_hook_in_train(self, new_hook, target_trigger,
-                              target_hook_name):
+    def replace_hook_in_train(self, new_hook, target_trigger, target_hook_name):
         del_one_hook_idx = self.reset_hook_in_train(
-            target_trigger=target_trigger, target_hook_name=target_hook_name)
-        self.register_hook_in_train(new_hook=new_hook,
-                                    trigger=target_trigger,
-                                    insert_pos=del_one_hook_idx)
+            target_trigger=target_trigger, target_hook_name=target_hook_name
+        )
+        self.register_hook_in_train(
+            new_hook=new_hook, trigger=target_trigger, insert_pos=del_one_hook_idx
+        )
 
     def replace_hook_in_eval(self, new_hook, target_trigger, target_hook_name):
         del_one_hook_idx = self.reset_hook_in_eval(
-            target_trigger=target_trigger, target_hook_name=target_hook_name)
-        self.register_hook_in_eval(new_hook=new_hook,
-                                   trigger=target_trigger,
-                                   insert_pos=del_one_hook_idx)
+            target_trigger=target_trigger, target_hook_name=target_hook_name
+        )
+        self.register_hook_in_eval(
+            new_hook=new_hook, trigger=target_trigger, insert_pos=del_one_hook_idx
+        )
 
-    def _reset_hook_in_trigger(self, hooks_dict, target_hook_name,
-                               target_trigger):
+    def _reset_hook_in_trigger(self, hooks_dict, target_hook_name, target_trigger):
         # clean/delete existing hooks for a specific trigger,
         # if target_hook_name given, will clean only the specific one;
         # otherwise, will clean all hooks for the trigger.
-        assert target_trigger in self.HOOK_TRIGGER, \
-            f"Got {target_trigger} as hook trigger, you should specify a " \
+        assert target_trigger in self.HOOK_TRIGGER, (
+            f"Got {target_trigger} as hook trigger, you should specify a "
             f"string within {self.HOOK_TRIGGER}."
+        )
         del_one_hook_idx = None
         if target_hook_name is None:
             hooks_dict[target_trigger] = []
             del_one_hook_idx = -1  # -1 indicates del the whole list
         else:
             for hook_idx in range(len(hooks_dict[target_trigger])):
-                if target_hook_name == hooks_dict[target_trigger][
-                        hook_idx].__name__:
+                if target_hook_name == hooks_dict[target_trigger][hook_idx].__name__:
                     del_one = hooks_dict[target_trigger].pop(hook_idx)
-                    logger.info(f"Remove the hook `{del_one.__name__}` from "
-                                f"hooks_set at trigger `{target_trigger}`")
+                    logger.info(
+                        f"Remove the hook `{del_one.__name__}` from "
+                        f"hooks_set at trigger `{target_trigger}`"
+                    )
                     del_one_hook_idx = hook_idx
                     break
             if del_one_hook_idx is None:
                 logger.warning(
                     f"In hook del procedure, can't find the target hook "
-                    f"named {target_hook_name}")
+                    f"named {target_hook_name}"
+                )
         return del_one_hook_idx
 
-    def register_hook_in_train(self,
-                               new_hook,
-                               trigger,
-                               insert_pos=None,
-                               base_hook=None,
-                               insert_mode="before"):
+    def register_hook_in_train(
+        self, new_hook, trigger, insert_pos=None, base_hook=None, insert_mode="before"
+    ):
         hooks_dict = self.hooks_in_train
-        self._register_hook(base_hook, hooks_dict, insert_mode, insert_pos,
-                            new_hook, trigger)
+        self._register_hook(
+            base_hook, hooks_dict, insert_mode, insert_pos, new_hook, trigger
+        )
 
-    def register_hook_in_ft(self,
-                            new_hook,
-                            trigger,
-                            insert_pos=None,
-                            base_hook=None,
-                            insert_mode="before"):
+    def register_hook_in_ft(
+        self, new_hook, trigger, insert_pos=None, base_hook=None, insert_mode="before"
+    ):
         hooks_dict = self.hooks_in_ft
-        self._register_hook(base_hook, hooks_dict, insert_mode, insert_pos,
-                            new_hook, trigger)
+        self._register_hook(
+            base_hook, hooks_dict, insert_mode, insert_pos, new_hook, trigger
+        )
 
-    def register_hook_in_eval(self,
-                              new_hook,
-                              trigger,
-                              insert_pos=None,
-                              base_hook=None,
-                              insert_mode="before"):
+    def register_hook_in_eval(
+        self, new_hook, trigger, insert_pos=None, base_hook=None, insert_mode="before"
+    ):
         hooks_dict = self.hooks_in_eval
-        self._register_hook(base_hook, hooks_dict, insert_mode, insert_pos,
-                            new_hook, trigger)
+        self._register_hook(
+            base_hook, hooks_dict, insert_mode, insert_pos, new_hook, trigger
+        )
 
-    def _register_hook(self, base_hook, hooks_dict, insert_mode, insert_pos,
-                       new_hook, trigger):
-        assert trigger in self.HOOK_TRIGGER, \
-            f"Got {trigger} as hook trigger, you should specify a string " \
+    def _register_hook(
+        self, base_hook, hooks_dict, insert_mode, insert_pos, new_hook, trigger
+    ):
+        assert trigger in self.HOOK_TRIGGER, (
+            f"Got {trigger} as hook trigger, you should specify a string "
             f"within {self.HOOK_TRIGGER}."
+        )
         # parse the insertion position
         target_hook_set = hooks_dict[trigger]
         if insert_pos is not None:
-            assert (insert_pos == -1) or (insert_pos == len(target_hook_set)
-                                          == 0) or \
-                   (0 <= insert_pos <= (len(target_hook_set))), \
-                   f"Got {insert_pos} as insert pos, you should specify a " \
-                   f"integer (1) =-1 " \
-                   f"or (2) =0 for null target_hook_set;" \
-                   f"or (3) within [0, {(len(target_hook_set))}]."
+            assert (
+                (insert_pos == -1)
+                or (insert_pos == len(target_hook_set) == 0)
+                or (0 <= insert_pos <= (len(target_hook_set)))
+            ), (
+                f"Got {insert_pos} as insert pos, you should specify a "
+                f"integer (1) =-1 "
+                f"or (2) =0 for null target_hook_set;"
+                f"or (3) within [0, {(len(target_hook_set))}]."
+            )
         elif base_hook is not None:
             base_hook_pos = target_hook_set.index(base_hook)
-            insert_pos = base_hook_pos - 1 if insert_mode == "before" else \
-                base_hook_pos + 1
+            insert_pos = (
+                base_hook_pos - 1 if insert_mode == "before" else base_hook_pos + 1
+            )
             # bounding the insert_pos in rational range
             insert_pos = 0 if insert_pos < 0 else insert_pos
-            insert_pos = -1 if insert_pos > len(
-                target_hook_set) else insert_pos
+            insert_pos = -1 if insert_pos > len(target_hook_set) else insert_pos
         else:
             insert_pos = -1  # By default, the new hook is called finally
         # register the new hook
@@ -235,8 +240,7 @@ class Trainer(BaseTrainer):
 
         self.ctx.check_split(target_data_split_name)
 
-        num_samples = self._run_routine(MODE.TRAIN, hooks_set,
-                                        target_data_split_name)
+        num_samples = self._run_routine(MODE.TRAIN, hooks_set, target_data_split_name)
 
         return num_samples, self.get_model_para(), self.ctx.eval_metrics
 
@@ -245,8 +249,9 @@ class Trainer(BaseTrainer):
 
         if self.ctx.check_split(target_data_split_name, skip=True):
             if target_data_split_name in [MODE.TEST, MODE.VAL]:
-                self._run_routine(target_data_split_name, hooks_set,
-                                  target_data_split_name)
+                self._run_routine(
+                    target_data_split_name, hooks_set, target_data_split_name
+                )
             else:
                 self._run_routine(MODE.TEST, hooks_set, target_data_split_name)
         else:
@@ -284,8 +289,7 @@ class Trainer(BaseTrainer):
 
     @lifecycle(LIFECYCLE.EPOCH)
     def _run_epoch(self, hooks_set):
-        for epoch_i in range(
-                getattr(self.ctx, f"num_{self.ctx.cur_split}_epoch")):
+        for epoch_i in range(getattr(self.ctx, f"num_{self.ctx.cur_split}_epoch")):
             self.ctx.cur_epoch_i = CtxVar(epoch_i, "epoch")
 
             for hook in hooks_set["on_epoch_start"]:
@@ -298,8 +302,7 @@ class Trainer(BaseTrainer):
 
     @lifecycle(LIFECYCLE.BATCH)
     def _run_batch(self, hooks_set):
-        for batch_i in range(
-                getattr(self.ctx, f"num_{self.ctx.cur_split}_batch")):
+        for batch_i in range(getattr(self.ctx, f"num_{self.ctx.cur_split}_batch")):
             self.ctx.cur_batch_i = CtxVar(batch_i, LIFECYCLE.BATCH)
 
             for hook in hooks_set["on_batch_start"]:
@@ -315,9 +318,10 @@ class Trainer(BaseTrainer):
                 hook(self.ctx)
 
             # Break in the final epoch
-            if self.ctx.cur_mode in [
-                    MODE.TRAIN, MODE.FINETUNE
-            ] and self.ctx.cur_epoch_i == self.ctx.num_train_epoch - 1:
+            if (
+                self.ctx.cur_mode in [MODE.TRAIN, MODE.FINETUNE]
+                and self.ctx.cur_epoch_i == self.ctx.num_train_epoch - 1
+            ):
                 if batch_i >= self.ctx.num_train_batch_last_epoch - 1:
                     break
 
@@ -339,8 +343,8 @@ class Trainer(BaseTrainer):
 
     def print_trainer_meta_info(self):
         """
-            print some meta info for code-users, e.g., model type; the para
-            names will be filtered out, etc.,
+        print some meta info for code-users, e.g., model type; the para
+        names will be filtered out, etc.,
         """
         logger.info(f"Model meta-info: {type(self.ctx.model)}.")
         logger.debug(f"Model meta-info: {self.ctx.model}.")
@@ -351,22 +355,28 @@ class Trainer(BaseTrainer):
         preserved_para_names = set(preserved_paras.keys())
         filtered_para_names = ori_para_names - preserved_para_names
         logger.info(f"Num of original para names: {len(ori_para_names)}.")
-        logger.info(f"Num of original trainable para names:"
-                    f" {len(self.ctx['trainable_para_names'])}.")
+        logger.info(
+            f"Num of original trainable para names:"
+            f" {len(self.ctx['trainable_para_names'])}."
+        )
         logger.info(
             f"Num of preserved para names in local update:"
             f" {len(preserved_para_names)}. \n"
-            f"Preserved para names in local update: {preserved_para_names}.")
+            f"Preserved para names in local update: {preserved_para_names}."
+        )
         logger.info(
             f"Num of filtered para names in local update:"
             f" {len(filtered_para_names)}. \n"
-            f"Filtered para names in local update: {filtered_para_names}.")
+            f"Filtered para names in local update: {filtered_para_names}."
+        )
 
-        logger.info(f"After register default hooks,\n"
-                    f"\tthe hooks_in_train is:\n\t"
-                    f"{format_log_hooks(self.hooks_in_train)};\n"
-                    f"\tthe hooks_in_eval is:\n\
-            t{format_log_hooks(self.hooks_in_eval)}")
+        logger.info(
+            f"After register default hooks,\n"
+            f"\tthe hooks_in_train is:\n\t"
+            f"{format_log_hooks(self.hooks_in_train)};\n"
+            f"\tthe hooks_in_eval is:\n\
+            t{format_log_hooks(self.hooks_in_eval)}"
+        )
 
     def _param_filter(self, state_dict, filter_keywords=None):
         """
@@ -390,21 +400,28 @@ class Trainer(BaseTrainer):
         if filter_keywords is None:
             filter_keywords = self.cfg.personalization.local_param
 
-        trainable_filter = lambda p: True if \
-            self.cfg.personalization.share_non_trainable_para else \
-            p in self.ctx.trainable_para_names
+        trainable_filter = lambda p: (
+            True
+            if self.cfg.personalization.share_non_trainable_para
+            else p in self.ctx.trainable_para_names
+        )
         keyword_filter = filter_by_specified_keywords
         return dict(
             filter(
-                lambda elem: trainable_filter(elem[0]) and keyword_filter(
-                    elem[0], filter_keywords), state_dict.items()))
+                lambda elem: trainable_filter(elem[0])
+                and keyword_filter(elem[0], filter_keywords),
+                state_dict.items(),
+            )
+        )
 
     def save_model(self, path, cur_round=-1):
         raise NotImplementedError(
             "The function `save_model` should be implemented according to "
-            "the ML backend (Pytorch, Tensorflow ...).")
+            "the ML backend (Pytorch, Tensorflow ...)."
+        )
 
     def load_model(self, path):
         raise NotImplementedError(
             "The function `load_model` should be implemented according to "
-            "the ML backend (Pytorch, Tensorflow ...).")
+            "the ML backend (Pytorch, Tensorflow ...)."
+        )

@@ -5,8 +5,7 @@ import os
 from pathlib import Path
 
 import federatedscope.register as register
-from federatedscope.core.configs.yacs_config import CfgNode, _merge_a_into_b, \
-    Argument
+from federatedscope.core.configs.yacs_config import CfgNode, _merge_a_into_b, Argument
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +15,9 @@ def set_help_info(cn_node, help_info_dict, prefix=""):
         if isinstance(v, Argument) and k not in help_info_dict:
             help_info_dict[prefix + k] = v.description
         elif isinstance(v, CN):
-            set_help_info(v,
-                          help_info_dict,
-                          prefix=f"{k}." if prefix == "" else f"{prefix}{k}.")
+            set_help_info(
+                v, help_info_dict, prefix=f"{k}." if prefix == "" else f"{prefix}{k}."
+            )
 
 
 class CN(CfgNode):
@@ -28,6 +27,7 @@ class CN(CfgNode):
     The two-level tree structure consists of several internal dict-like \
     containers to allow simple key-value access and management.
     """
+
     def __init__(self, init_dict=None, key_list=None, new_allowed=False):
         init_dict = super().__init__(init_dict, key_list, new_allowed)
         self.__cfg_check_funcs__ = list()  # to check the config values
@@ -219,9 +219,9 @@ class CN(CfgNode):
 
         if save:  # save the final cfg
             Path(self.outdir).mkdir(parents=True, exist_ok=True)
-            with open(os.path.join(self.outdir, "config.yaml"),
-                      'w') as outfile:
+            with open(os.path.join(self.outdir, "config.yaml"), "w") as outfile:
                 from contextlib import redirect_stdout
+
                 with redirect_stdout(outfile):
                     tmp_cfg = copy.deepcopy(self)
                     tmp_cfg.clear_aux_info()
@@ -231,12 +231,13 @@ class CN(CfgNode):
                     try:
                         import wandb
                         import yaml
+
                         cfg_yaml = yaml.safe_load(tmp_cfg.dump())
                         wandb.config.update(cfg_yaml, allow_val_change=True)
                     except ImportError:
                         logger.error(
-                            "cfg.wandb.use=True but not install the wandb "
-                            "package")
+                            "cfg.wandb.use=True but not install the wandb " "package"
+                        )
                         exit()
 
             if inform:
@@ -272,7 +273,7 @@ def init_global_cfg(cfg):
     # Basic options, first level configs
     # ---------------------------------------------------------------------- #
 
-    cfg.backend = 'torch'
+    cfg.backend = "torch"
 
     # Whether to use GPU
     cfg.use_gpu = False
@@ -284,7 +285,7 @@ def init_global_cfg(cfg):
     cfg.verbose = 1
 
     # How many decimal places we print out using logger
-    cfg.print_decimal_digits = 6
+    cfg.print_decimal_digits = 3
 
     # Specify the device
     cfg.device = -1
@@ -293,12 +294,12 @@ def init_global_cfg(cfg):
     cfg.seed = 0
 
     # Path of configuration file
-    cfg.cfg_file = ''
+    cfg.cfg_file = ""
 
     # The dir used to save log, exp_config, models, etc,.
-    cfg.outdir = 'exp'
-    cfg.expname = ''  # detailed exp name to distinguish different sub-exp
-    cfg.expname_tag = ''  # detailed exp tag to distinguish different
+    cfg.outdir = "exp"
+    cfg.expname = ""  # detailed exp name to distinguish different sub-exp
+    cfg.expname_tag = ""  # detailed exp tag to distinguish different
     # sub-exp with the same expname
 
     # extend user customized configs
