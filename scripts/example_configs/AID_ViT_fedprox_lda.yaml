@@ -9,8 +9,8 @@ federate:
   total_round_num: 300
   sample_client_rate: 0.2
 data:
-  splitter: iid
-  # splitter_args: [{'client_num': 200}]
+  splitter: lda
+  splitter_args: [{'alpha': 0.5}]
   type: AID
   # splits: [0.6,0.2,0.2]
   # subsample: 0.05

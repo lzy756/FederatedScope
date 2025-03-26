@@ -1,5 +1,6 @@
 use_gpu: True
 device: 0
+expname_tag: fedavg_lda
 early_stop:
   patience: 5
 seed: 12345
@@ -9,8 +10,8 @@ federate:
   total_round_num: 300
   sample_client_rate: 0.2
 data:
-  splitter: iid
-  # splitter_args: [{'client_num': 200}]
+  splitter: lda
+  splitter_args: [{'alpha': 0.5}]
   type: AID
   # splits: [0.6,0.2,0.2]
   # subsample: 0.05
@@ -37,6 +38,3 @@ eval:
   freq: 10
   metrics: ['acc', 'correct']
   count_flops: False
-fedprox:
-  use: True
-  mu: 0.5
