@@ -6,9 +6,14 @@ early_stop:
 federate:
   mode: 'standalone'
   make_global_eval: False
-  local_update_steps: 4
   total_round_num: 400
   share_local_model: False
+train:
+  local_update_steps: 4
+  optimizer:
+    lr: 0.5
+    weight_decay: 0.0005
+    type: SGD
 data:
   root: data/
   type: fs_contest_data
@@ -20,10 +25,6 @@ model:
   task: graph
 personalization:
   local_param: ['encoder_atom', 'encoder', 'clf']   # to handle size-different pre & post layers
-optimizer:
-  lr: 0.5
-  weight_decay: 0.0005
-  type: SGD
 criterion:
   type: CrossEntropyLoss
 trainer:
