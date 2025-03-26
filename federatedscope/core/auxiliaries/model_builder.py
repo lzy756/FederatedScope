@@ -8,11 +8,12 @@ try:
     from federatedscope.contrib.model import *
 except ImportError as error:
     logger.warning(
-        f'{error} in `federatedscope.contrib.model`, some modules are not '
-        f'available.')
+        f"{error} in `federatedscope.contrib.model`, some modules are not "
+        f"available."
+    )
 
 
-def get_shape_from_data(data, model_config, backend='torch'):
+def get_shape_from_data(data, model_config, backend="torch"):
     """
     Extract the input shape from the given data, which can be used to build \
     the data. Users can also use `data.input_shape` to specify the shape.
@@ -24,55 +25,68 @@ def get_shape_from_data(data, model_config, backend='torch'):
         shape (tuple): the input shape
     """
     # Handle some special cases
-    if model_config.type.lower() in ['vmfnet', 'hmfnet']:
-        return data['train'].n_col if model_config.type.lower(
-        ) == 'vmfnet' else data['train'].n_row
+    if model_config.type.lower() in ["vmfnet", "hmfnet"]:
+        return (
+            data["train"].n_col
+            if model_config.type.lower() == "vmfnet"
+            else data["train"].n_row
+        )
     elif model_config.type.lower() in [
-            'gcn', 'sage', 'gpr', 'gat', 'gin', 'mpnn'
-    ] or model_config.type.startswith('gnn_'):
-        num_label = data['num_label'] if 'num_label' in data else None
-        num_edge_features = data['data'][
-            'num_edge_features'] if model_config.type == 'mpnn' else None
-        if model_config.task.startswith('graph'):
+        "gcn",
+        "sage",
+        "gpr",
+        "gat",
+        "gin",
+        "mpnn",
+    ] or model_config.type.startswith("gnn_"):
+        num_label = data["num_label"] if "num_label" in data else None
+        num_edge_features = (
+            data["data"]["num_edge_features"] if model_config.type == "mpnn" else None
+        )
+        if model_config.task.startswith("graph"):
             # graph-level task
-            data_representative = next(iter(data['train']))
+            data_representative = next(iter(data["train"]))
             return data_representative.x.shape, num_label, num_edge_features
         else:
             # node/link-level task
-            return data['data'].x.shape, num_label, num_edge_features
-    elif model_config.type.lower() in ['atc_model']:
+            return data["data"].x.shape, num_label, num_edge_features
+    elif model_config.type.lower() in ["atc_model"]:
         return None
 
     if isinstance(data, dict):
         keys = list(data.keys())
-        if 'test' in keys:
-            key_representative = 'test'
-        elif 'val' in keys:
-            key_representative = 'val'
-        elif 'train' in keys:
-            key_representative = 'train'
-        elif 'data' in keys:
-            key_representative = 'data'
+        if "test" in keys:
+            key_representative = "test"
+        elif "val" in keys:
+            key_representative = "val"
+        elif "train" in keys:
+            key_representative = "train"
+        elif "data" in keys:
+            key_representative = "data"
         else:
             key_representative = keys[0]
-            logger.warning(f'We chose the key {key_representative} as the '
-                           f'representative key to extract data shape.')
+            logger.warning(
+                f"We chose the key {key_representative} as the "
+                f"representative key to extract data shape."
+            )
         data_representative = data[key_representative]
     else:
         # Handle the data with non-dict format
         data_representative = data
 
     if isinstance(data_representative, dict):
-        if 'x' in data_representative:
-            shape = np.asarray(data_representative['x']).shape
+        if "x" in data_representative:
+            shape = np.asarray(data_representative["x"]).shape
             if len(shape) == 1:  # (batch, ) = (batch, 1)
                 return 1
             else:
                 return shape
-    elif backend == 'torch':
+    elif backend == "torch":
         import torch
+
         if issubclass(type(data_representative), torch.utils.data.DataLoader):
             x, _ = next(iter(data_representative))
+
             if isinstance(x, list):
                 return x[0].shape
             return x.shape
@@ -83,17 +97,17 @@ def get_shape_from_data(data, model_config, backend='torch'):
                     return x[0].shape
                 return x.shape
             except:
-                raise TypeError('Unsupported data type.')
-    elif backend == 'tensorflow':
+                raise TypeError("Unsupported data type.")
+    elif backend == "tensorflow":
         # TODO: Handle more tensorflow type here
-        shape = data_representative['x'].shape
+        shape = data_representative["x"].shape
         if len(shape) == 1:  # (batch, ) = (batch, 1)
             return 1
         else:
             return shape
 
 
-def get_model(model_config, local_data=None, backend='torch'):
+def get_model(model_config, local_data=None, backend="torch"):
     """
     This function builds an instance of model to be trained.
 
@@ -122,7 +136,7 @@ def get_model(model_config, local_data=None, backend='torch'):
         ``mf.model.model_builder.get_mfnet()``
         ===================================  ==============================
     """
-    if model_config.type.lower() in ['xgb_tree', 'gbdt_tree', 'random_forest']:
+    if model_config.type.lower() in ["xgb_tree", "gbdt_tree", "random_forest"]:
         input_shape = None
     elif local_data is not None:
         input_shape = get_shape_from_data(local_data, model_config, backend)
@@ -130,75 +144,93 @@ def get_model(model_config, local_data=None, backend='torch'):
         input_shape = model_config.input_shape
 
     if input_shape is None:
-        logger.warning('The input shape is None. Please specify the '
-                       '`data.input_shape`(a tuple) or give the '
-                       'representative data to `get_model` if necessary')
+        logger.warning(
+            "The input shape is None. Please specify the "
+            "`data.input_shape`(a tuple) or give the "
+            "representative data to `get_model` if necessary"
+        )
 
     for func in register.model_dict.values():
         model = func(model_config, input_shape)
         if model is not None:
             return model
 
-    if model_config.type.lower() == 'lr':
-        if backend == 'torch':
+    if model_config.type.lower() == "lr":
+        if backend == "torch":
             from federatedscope.core.lr import LogisticRegression
-            model = LogisticRegression(in_channels=input_shape[-1],
-                                       class_num=model_config.out_channels)
-        elif backend == 'tensorflow':
+
+            model = LogisticRegression(
+                in_channels=input_shape[-1], class_num=model_config.out_channels
+            )
+        elif backend == "tensorflow":
             from federatedscope.cross_backends import LogisticRegression
-            model = LogisticRegression(in_channels=input_shape[-1],
-                                       class_num=1,
-                                       use_bias=model_config.use_bias)
+
+            model = LogisticRegression(
+                in_channels=input_shape[-1], class_num=1, use_bias=model_config.use_bias
+            )
         else:
             raise ValueError
 
-    elif model_config.type.lower() == 'mlp':
+    elif model_config.type.lower() == "mlp":
         from federatedscope.core.mlp import MLP
-        model = MLP(channel_list=[input_shape[-1]] + [model_config.hidden] *
-                    (model_config.layer - 1) + [model_config.out_channels],
-                    dropout=model_config.dropout)
 
-    elif model_config.type.lower() == 'quadratic':
+        model = MLP(
+            channel_list=[input_shape[-1]]
+            + [model_config.hidden] * (model_config.layer - 1)
+            + [model_config.out_channels],
+            dropout=model_config.dropout,
+        )
+
+    elif model_config.type.lower() == "quadratic":
         from federatedscope.tabular.model import QuadraticModel
+
         model = QuadraticModel(input_shape[-1], 1)
 
-    elif model_config.type.lower() in ['convnet2', 'convnet5', 'vgg11']:
+    elif model_config.type.lower() in ["convnet2", "convnet5", "vgg11"]:
         from federatedscope.cv.model import get_cnn
+
         model = get_cnn(model_config, input_shape)
     elif model_config.type.lower() in [
-            'simclr', 'simclr_linear', "supervised_local", "supervised_fedavg"
+        "simclr",
+        "simclr_linear",
+        "supervised_local",
+        "supervised_fedavg",
     ]:
         from federatedscope.cl.model import get_simclr
+
         model = get_simclr(model_config, input_shape)
-        if model_config.type.lower().endswith('linear'):
+        if model_config.type.lower().endswith("linear"):
             for name, value in model.named_parameters():
-                if not name.startswith('linear'):
+                if not name.startswith("linear"):
                     value.requires_grad = False
-    elif model_config.type.lower() in ['lstm']:
+    elif model_config.type.lower() in ["lstm"]:
         from federatedscope.nlp.model import get_rnn
+
         model = get_rnn(model_config, input_shape)
-    elif model_config.type.lower().endswith('transformers'):
+    elif model_config.type.lower().endswith("transformers"):
         from federatedscope.nlp.model import get_transformer
+
         model = get_transformer(model_config, input_shape)
-    elif model_config.type.lower() in [
-            'gcn', 'sage', 'gpr', 'gat', 'gin', 'mpnn'
-    ]:
+    elif model_config.type.lower() in ["gcn", "sage", "gpr", "gat", "gin", "mpnn"]:
         from federatedscope.gfl.model import get_gnn
+
         model = get_gnn(model_config, input_shape)
-    elif model_config.type.lower() in ['vmfnet', 'hmfnet']:
+    elif model_config.type.lower() in ["vmfnet", "hmfnet"]:
         from federatedscope.mf.model.model_builder import get_mfnet
+
         model = get_mfnet(model_config, input_shape)
-    elif model_config.type.lower() in [
-            'xgb_tree', 'gbdt_tree', 'random_forest'
-    ]:
-        from federatedscope.vertical_fl.tree_based_models.model.model_builder \
-            import get_tree_model
+    elif model_config.type.lower() in ["xgb_tree", "gbdt_tree", "random_forest"]:
+        from federatedscope.vertical_fl.tree_based_models.model.model_builder import (
+            get_tree_model,
+        )
+
         model = get_tree_model(model_config)
-    elif model_config.type.lower() in ['atc_model']:
+    elif model_config.type.lower() in ["atc_model"]:
         from federatedscope.nlp.hetero_tasks.model import ATCModel
+
         model = ATCModel(model_config)
     else:
-        raise ValueError('Model {} is not provided'.format(model_config.type))
+        raise ValueError("Model {} is not provided".format(model_config.type))
 
     return model
 

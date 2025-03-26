@@ -10,6 +10,7 @@ class IIDSplitter(BaseSplitter):
     Args:
         client_num: the dataset will be split into ``client_num`` pieces
     """
+
     def __init__(self, client_num):
         super(IIDSplitter, self).__init__(client_num)
 
@@ -17,9 +18,12 @@ class IIDSplitter(BaseSplitter):
         from torch.utils.data import Dataset, Subset
 
         length = len(dataset)
-        index = [x for x in range(length)]
+        index = np.arange(length)
         np.random.shuffle(index)
-        idx_slice = np.split_array(dataset, self.client_num)
+
+        # module 'numpy' has no attribute 'split_array'
+        idx_slice = np.array_split(index, self.client_num)
+
         if isinstance(dataset, Dataset):
             data_list = [Subset(dataset, idxs) for idxs in idx_slice]
         else:
