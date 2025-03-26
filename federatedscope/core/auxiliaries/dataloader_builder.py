@@ -8,7 +8,7 @@ except ImportError:
     Dataset = object
 
 
-def get_dataloader(dataset, config, split='train'):
+def get_dataloader(dataset, config, split="train"):
     """
     Instantiate a DataLoader via config.
 
@@ -37,49 +37,54 @@ def get_dataloader(dataset, config, split='train'):
         ========================  ===============================
     """
     # DataLoader builder only support torch backend now.
-    if config.backend != 'torch':
+    if config.backend != "torch":
         return None
 
-    if config.dataloader.type == 'base':
+    if config.dataloader.type == "base":
         from torch.utils.data import DataLoader
+
         loader_cls = DataLoader
-    elif config.dataloader.type == 'raw':
+    elif config.dataloader.type == "raw":
         # No DataLoader
         return dataset
-    elif config.dataloader.type == 'pyg':
+    elif config.dataloader.type == "pyg":
         from torch_geometric.loader import DataLoader as PyGDataLoader
+
         loader_cls = PyGDataLoader
-    elif config.dataloader.type == 'graphsaint-rw':
-        if split == 'train':
+    elif config.dataloader.type == "graphsaint-rw":
+        if split == "train":
             from torch_geometric.loader import GraphSAINTRandomWalkSampler
+
             loader_cls = GraphSAINTRandomWalkSampler
         else:
             from torch_geometric.loader import NeighborSampler
+
             loader_cls = NeighborSampler
-    elif config.dataloader.type == 'neighbor':
+    elif config.dataloader.type == "neighbor":
         from torch_geometric.loader import NeighborSampler
+
         loader_cls = NeighborSampler
-    elif config.dataloader.type == 'mf':
+    elif config.dataloader.type == "mf":
         from federatedscope.mf.dataloader import MFDataLoader
+
         loader_cls = MFDataLoader
     else:
-        raise ValueError(f'data.loader.type {config.data.loader.type} '
-                         f'not found!')
+        raise ValueError(f"data.loader.type {config.data.loader.type} " f"not found!")
 
     raw_args = dict(config.dataloader)
-    if split != 'train':
-        raw_args['shuffle'] = False
-        raw_args['sizes'] = [-1]
-        raw_args['drop_last'] = False
+    if split != "train":
+        raw_args["shuffle"] = False
+        raw_args["sizes"] = [-1]
+        raw_args["drop_last"] = False
         # For evaluation in GFL
-        if config.dataloader.type in ['graphsaint-rw', 'neighbor']:
-            raw_args['batch_size'] = 4096
+        if config.dataloader.type in ["graphsaint-rw", "neighbor"]:
+            raw_args["batch_size"] = 4096
             dataset = dataset[0].edge_index
     else:
-        if config.dataloader.type in ['graphsaint-rw']:
+        if config.dataloader.type in ["graphsaint-rw"]:
             # Raw graph
             dataset = dataset[0]
-        elif config.dataloader.type in ['neighbor']:
+        elif config.dataloader.type in ["neighbor"]:
             # edge_index of raw graph
             dataset = dataset[0].edge_index
     filtered_args = filter_dict(loader_cls.__init__, raw_args)

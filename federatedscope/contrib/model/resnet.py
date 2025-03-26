@@ -284,10 +284,13 @@ def resnet(model_config):
         net = ResNet34(model_config.num_classes)
     elif "50" in model_config.type:
         net = ResNet50(model_config.num_classes)
+    elif "101" in model_config.type:
+        net = ResNet101(model_config.num_classes)
     return net
 
 
-def call_resnet(model_config, local_data):
+def call_resnet(model_config, input_shape):
+    logger.info(f"input_shape: {input_shape}")
     if "resnet" in model_config.type and "pre" in model_config.type:
         model = preact_resnet(model_config)
         return model

@@ -216,7 +216,7 @@ class BaseRunner(object):
             server_id=self.server_id,
             config=client_specific_config,
             data=client_data,
-            model=client_model
+            model=client_model  # client_model --> _shared_client_model
             or get_model(
                 client_specific_config.model, client_data, backend=self.cfg.backend
             ),
