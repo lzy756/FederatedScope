@@ -1,0 +1,42 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 5
+seed: 12345
+federate:
+  client_num: 20
+  mode: standalone
+  total_round_num: 300
+  sample_client_rate: 0.2
+data:
+  splitter: iid
+  # splitter_args: [{'client_num': 200}]
+  type: AID
+  # splits: [0.6,0.2,0.2]
+  # subsample: 0.05
+  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
+dataloader:
+  batch_size: 64
+model:
+  type: ViT
+  out_channels: 30
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 2e-4 
+    weight_decay: 0.01 
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: cvtrainer
+eval:
+  freq: 10
+  metrics: ['acc', 'correct']
+  count_flops: False
+fedprox:
+  use: True
+  mu: 0.5

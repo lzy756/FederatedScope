@@ -13,7 +13,7 @@ local_updates=(1 3)
 personalization_regular_weight=0.1
 method=Ditto
 bs=64
-outdir=exp_out/${method}
+outdir=exp/${method}
 
 for (( g=0; g<${#models[@]}; g++ ))
 do
