@@ -41,12 +41,15 @@ class ResnetCifar100Test(unittest.TestCase):
 
         cfg.data.type = "cifar100"
         cfg.data.root = "./cifar100/data"
-        cfg.data.splitter = "iid"  # lda 非独立同分布 iid 独立同分布
-        cfg.dataloader.batch_size = 512
+        cfg.data.splitter = "lda"  # lda 非独立同分布 iid 独立同分布
+        cfg.dataloader.batch_size = 64
 
         cfg.wandb.use = True
         cfg.wandb.name_user = "bo-wang-bupt"
         cfg.wandb.name_project = "resnet50_cifar100"
+
+        cfg.fedprox.use = True
+        cfg.fedprox.mu = 0.1
 
         cfg.model.type = "resnet_50"
         cfg.model.num_classes = 100
