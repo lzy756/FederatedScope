@@ -1,5 +1,6 @@
 use_gpu: True
 device: 0
+expname_tag: fedprox_lda
 early_stop:
   patience: 5
 seed: 12345
@@ -10,7 +11,7 @@ federate:
   sample_client_rate: 0.2
 data:
   splitter: lda
-  splitter_args: [{'alpha': 0.5}]
+  splitter_args: [{'alpha': 0.1}]
   type: AID
   # splits: [0.6,0.2,0.2]
   # subsample: 0.05
