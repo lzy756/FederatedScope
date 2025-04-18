@@ -60,7 +60,7 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
             FedOptAggregator, NoCommunicationAggregator, \
             AsynClientsAvgAggregator, KrumAggregator, \
             MedianAggregator, TrimmedmeanAggregator, \
-            BulyanAggregator,  NormboundingAggregator
+            BulyanAggregator,  NormboundingAggregator, FedSAKAggregator
 
     STR2AGG = {
         'fedavg': ClientsAvgAggregator,
@@ -119,6 +119,8 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
         return NoCommunicationAggregator(model=model,
                                          device=device,
                                          config=config)
+    elif aggregator_type == 'fedsak':
+        return FedSAKAggregator(config=config)
     else:
         raise NotImplementedError(
             "Aggregator {} is not implemented.".format(aggregator_type))

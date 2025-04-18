@@ -41,7 +41,7 @@ def load_my_net(model_config, local_data):
         else:
             param.requires_grad = False
     # ---- 参数审计 ----
-    logger.info("\n----- 可训练参数审计 -----")
+    logger.info("----- 可训练参数审计 -----")
     trainable_params = sum(p.numel() for p in model.parameters()
                            if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())

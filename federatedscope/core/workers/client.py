@@ -109,6 +109,7 @@ class Client(BaseClient):
                                    config=self._cfg,
                                    is_attacker=self.is_attacker,
                                    monitor=self._monitor)
+        print(type(self.trainer))
         self.device = device
 
         # For client-side evaluation

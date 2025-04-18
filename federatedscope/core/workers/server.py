@@ -100,6 +100,7 @@ class Server(BaseServer):
                                          device=device,
                                          online=self._cfg.federate.online_aggr,
                                          config=self._cfg)
+        print(type(self.aggregator))
         if self._cfg.federate.restore_from != '':
             if not os.path.exists(self._cfg.federate.restore_from):
                 logger.warning(f'Invalid `restore_from`:'
