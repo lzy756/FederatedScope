@@ -15,18 +15,13 @@ from federatedscope.core.aggregators.bulyan_aggregator import \
     BulyanAggregator
 from federatedscope.core.aggregators.normbounding_aggregator import \
     NormboundingAggregator
+from federatedscope.core.aggregators.fedsak_aggregator import \
+    FedSAKAggregator
 
 __all__ = [
-    'Aggregator',
-    'NoCommunicationAggregator',
-    'ClientsAvgAggregator',
-    'OnlineClientsAvgAggregator',
-    'AsynClientsAvgAggregator',
-    'ServerClientsInterpolateAggregator',
-    'FedOptAggregator',
-    'KrumAggregator',
-    'MedianAggregator',
-    'TrimmedmeanAggregator',
-    'BulyanAggregator',
-    'NormboundingAggregator',
+    'Aggregator', 'NoCommunicationAggregator', 'ClientsAvgAggregator',
+    'OnlineClientsAvgAggregator', 'AsynClientsAvgAggregator',
+    'ServerClientsInterpolateAggregator', 'FedOptAggregator', 'KrumAggregator',
+    'MedianAggregator', 'TrimmedmeanAggregator', 'BulyanAggregator',
+    'NormboundingAggregator', 'FedSAKAggregator'
 ]

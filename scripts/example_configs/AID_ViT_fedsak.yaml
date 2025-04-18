@@ -1,0 +1,51 @@
+use_gpu: True
+device: 0
+expname_tag: AID_ViT_fedsak
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  client_num: 20
+  method: fedsak
+  mode: standalone
+  total_round_num: 300
+  sample_client_rate: 0.2
+data:
+  splitter: iid
+  # splitter_args: [{'client_num': 200}]
+  type: AID
+  # splits: [0.6,0.2,0.2]
+  # subsample: 0.05
+  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
+aggregator:
+  lambda_: 1e-3
+  lr_shared: 0.05
+  filter_keys:                 # 与 ViT.py 中的 unfreeze_keys 完全对齐
+  - embeddings.position_embeddings
+  - encoder.layer.9
+  - encoder.layer.10
+  - encoder.layer.11
+  # - layernorm               # 可选：加 LN
+  - classifier
+trainer:
+  type: fedsak_trainer
+dataloader:
+  batch_size: 64
+model:
+  type: ViT
+  out_channels: 30
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 2e-4 
+    weight_decay: 0.01 
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 10
+  metrics: ['acc', 'correct']
+  count_flops: False
