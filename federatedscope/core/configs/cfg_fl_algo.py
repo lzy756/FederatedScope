@@ -4,6 +4,13 @@ from federatedscope.register import register_config
 
 
 def extend_fl_algo_cfg(cfg):
+
+    # ---------------------------------------------------------------------- #
+    # fedsak related options, a general fl algorithm
+    # ---------------------------------------------------------------------- #
+    cfg.fedsak = CN()
+    cfg.fedsak.share_patterns = []
+
     # ---------------------------------------------------------------------- #
     # fedopt related options, a general fl algorithm
     # ---------------------------------------------------------------------- #
