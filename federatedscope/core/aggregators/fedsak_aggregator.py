@@ -1,71 +1,99 @@
-# federatedscope/contrib/aggregator/fedsak_aggregator.py
 import torch
 from torch import nn
 from federatedscope.core.aggregators import Aggregator
+import logging
 
-
-def _stack_param_matrix(client_states, key):
-    """把同名权重展平成二维矩阵，维度 = (n_client, -1)"""
-    mats = [state[key].flatten() for state in client_states]
-    return torch.stack(mats, dim=0)  # [M, D]
-
-
-def _unstack_to_clients(matrix, shapes):
-    """反拆回各客户端张量形状"""
-    mats = torch.split(matrix, 1, dim=0)  # tuple len=M
-    mats = [m.squeeze(0) for m in mats]
-    tensors = [m.reshape(shape) for m, shape in zip(mats, shapes)]
-    return tensors
+logger = logging.getLogger(__name__)
 
 
 class FedSAKAggregator(Aggregator):
     r"""
-    实现论文 FedSAK ⟨Liao et al., NeurIPS 2024⟩ 的核心：
+    实现论文 FedSAK 的核心算法：
     • 堆叠各客户端共享层 → 施加张量 trace‑norm 正则 → 次梯度更新
-    • 返回 **个性化** slice 给对应客户端
+    • 返回个性化 slice 给对应客户端
     """
-    def __init__(self, config, **kwargs):
-        # super().__init__(config, **kwargs)
+    def __init__(self, config):
+        # super().__init__(config, model=model, device=device)
         self.lmbda = config.aggregator.get("lambda", 1e-3)
-        self.lr = config.aggregator.get("lr_shared", 0.1)
-        # 与 Trainer 保持同一顺序的参数名
-        self.filter_keys = config.aggregator.get("filter_keys", [])
+        self.lr = config.aggregator.get("lr_shared", 0.05)
+        self.share_patterns = config.aggregator.get("filter_keys", [])
+
+        logger.info("FedSAK Aggregator initialized with " +
+                    f"lambda={self.lmbda}, lr={self.lr}")
+        logger.info(f"Share patterns: {self.share_patterns}")
 
     # ------ 核心聚合函数 ------
     def aggregate(self, agg_info):
         """
-        agg_info['client_feedback'] = [
-            {'num_sample': n_i, 'model_para': {...}}, ...]
+        处理来自客户端的模型参数，执行trace-norm正则化
         """
-        client_states = [
-            fb['model_para'] for fb in agg_info['client_feedback']
-        ]
-        n_client = len(client_states)
+        # 解析聚合信息
+        client_feedback = agg_info['client_feedback']
+
+        # 从client_feedback中提取必要信息
+        client_ids = []
+        model_params = []
+
+        for feedback in client_feedback:
+            client_ids.append(feedback['client_id'])
+            sample_size, model_para = feedback['model_para']
+            # print(type(model_para),type(feedback['model_para']))
+            model_params.append(model_para)
+
+        n_client = len(model_params)
         updated_dicts = [dict() for _ in range(n_client)]
 
-        for key in self.filter_keys:
-            # 1. 组装矩阵 W ∈ ℝ^{M×D}
-            shapes = [state[key].shape for state in client_states]
-            W = _stack_param_matrix(client_states, key)  # [M, D]
+        # 处理每个共享模式
+        for pattern in self.share_patterns:
+            try:
+                # 查找匹配该模式的所有键
+                matching_keys = []
+                for params in model_params:
+                    matching_keys.extend(
+                        [k for k in params.keys() if pattern in k])
+                # 去重
+                matching_keys = list(set(matching_keys))
 
-            # 2. Trace‑norm 次梯度  ‖W‖_*  =  ‖Σ‖_1
-            #    W = U Σ V^T, 次梯度 = U V^T
-            U, _, Vh = torch.linalg.svd(W, full_matrices=False)
-            grad = torch.matmul(U, Vh)  # [M, D]
+                if not matching_keys:
+                    logger.warning(
+                        f"No keys found matching pattern '{pattern}'")
+                    continue
 
-            # 3. Slice‑wise 更新
-            W_new = W - self.lr * self.lmbda * grad
+                # 处理每个匹配的键
+                for k in matching_keys:
+                    # 检查所有客户端是否都有此键
+                    if all(k in params for params in model_params):
+                        # 提取形状信息
+                        shapes = [params[k].shape for params in model_params]
+                        # 堆叠参数矩阵
+                        W = torch.stack(
+                            [params[k].flatten() for params in model_params],
+                            0)
+                        # 执行SVD分解
+                        U, _, Vh = torch.linalg.svd(W, full_matrices=False)
+                        # 计算次梯度
+                        grad = U @ Vh
+                        # 更新参数
+                        W_new = W - self.lr * self.lmbda * grad
+                        # 还原各客户端参数形状
+                        for idx, slice_vec in enumerate(W_new):
+                            updated_dicts[idx][k] = slice_vec.reshape(
+                                shapes[idx])
+                    else:
+                        logger.warning(
+                            f"Key '{k}' not found in all client models")
+                        # 保留原参数
+                        for idx in range(n_client):
+                            if k in model_params[idx]:
+                                updated_dicts[idx][k] = model_params[idx][k]
+            except Exception as e:
+                logger.warning(
+                    f"Error processing pattern '{pattern}': {str(e)}")
 
-            # 4. 拆回客户端形状
-            tensors = _unstack_to_clients(W_new, shapes)
-            for i, t in enumerate(tensors):
-                updated_dicts[i][key] = t
-
-        # -------- 组织返回格式 --------
-        # FederatedScope 允许返回 {"model_para_all": {cid: {...}}}
-        cid_list = [fb['client_ID'] for fb in agg_info['client_feedback']]
+        # 构建返回格式
         personalized = {
             cid: state
-            for cid, state in zip(cid_list, updated_dicts)
+            for cid, state in zip(client_ids, updated_dicts)
         }
+
         return {"model_para_all": personalized}

@@ -21,14 +21,21 @@ aggregator:
   lambda_: 1e-3
   lr_shared: 0.05
   filter_keys:                 # 与 ViT.py 中的 unfreeze_keys 完全对齐
-  - embeddings.position_embeddings
+  - embeddings.position
   - encoder.layer.9
   - encoder.layer.10
   - encoder.layer.11
   # - layernorm               # 可选：加 LN
   - classifier
 trainer:
-  type: fedsak_trainer
+  type: fedsak
+fedsak:                 # ← 额外可选配置
+  share_patterns:
+    - embeddings.position
+    - encoder.layer.9
+    - encoder.layer.10
+    - encoder.layer.11
+    - classifier
 dataloader:
   batch_size: 64
 model:
