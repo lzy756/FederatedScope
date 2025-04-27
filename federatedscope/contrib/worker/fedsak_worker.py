@@ -29,6 +29,7 @@ class FedSAKServer(Server):
                          total_round_num, device, strategy, unseen_clients_id,
                          **kwargs)
 
+        self.agg_lmbda = config.aggregator.get("lambda_", 1e-3)
         # 保存共享层配置，用于调试
         self.share_patterns = config.fedsak.share_patterns
 
@@ -176,6 +177,14 @@ class FedSAKServer(Server):
         # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
         self.prev_sample_client_ids = self.sample_client_ids.copy()
 
+        if self.agg_lmbda == 0:
+            receiver = list(self.comm_manager.neighbors.keys())
+            avg_model = list(result['model_para_all'].values())[0]
+            for rcv_idx in receiver:
+                self.personalized_slices[rcv_idx] = avg_model
+            self.prev_sample_client_ids = receiver.copy()
+            print("avg_receiver:", self.prev_sample_client_ids)
+
         # 清空缓冲 & 进入下一轮
         self.msg_buffer['train'][round].clear()
         self.state += 1
@@ -318,6 +327,7 @@ class FedSAKClient(Client):
 
         # 获取模型参数并发送
         model_para = self.trainer.get_model_para()
+        # print(model_para.keys())
 
         self.comm_manager.send(
             Message(msg_type="model_para",
