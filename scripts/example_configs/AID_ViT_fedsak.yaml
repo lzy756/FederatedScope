@@ -9,7 +9,7 @@ federate:
   method: fedsak
   mode: standalone
   total_round_num: 300
-  sample_client_rate: 0.2
+  sample_client_rate: 1.0
 data:
   splitter: iid
   # splitter_args: [{'client_num': 200}]
@@ -19,7 +19,7 @@ data:
   # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
 aggregator:
   lambda_: 1e-3
-  lr_shared: 0.05
+  lr_shared: 0.01
   filter_keys:                 # 与 ViT.py 中的 unfreeze_keys 完全对齐
   - embeddings.position
   - encoder.layer.9
