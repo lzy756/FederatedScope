@@ -37,7 +37,7 @@ fedsak:                 # ← 额外可选配置
     - encoder.layer.11
     - classifier
 dataloader:
-  batch_size: 64
+  batch_size: 32
 model:
   type: ViT
   out_channels: 30

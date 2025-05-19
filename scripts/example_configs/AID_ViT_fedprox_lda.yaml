@@ -7,8 +7,8 @@ seed: 12345
 federate:
   client_num: 20
   mode: standalone
-  total_round_num: 300
-  sample_client_rate: 0.2
+  total_round_num: 50
+  sample_client_rate: 1.0
 data:
   splitter: lda
   splitter_args: [{'alpha': 0.1}]
@@ -35,7 +35,7 @@ criterion:
 trainer:
   type: cvtrainer
 eval:
-  freq: 10
+  freq: 2
   metrics: ['acc', 'correct']
   count_flops: False
 fedprox:
