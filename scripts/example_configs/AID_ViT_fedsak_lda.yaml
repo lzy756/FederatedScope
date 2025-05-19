@@ -1,5 +1,5 @@
 use_gpu: True
-device: 1
+device: 0
 expname_tag: AID_ViT_fedsak_lda
 early_stop:
   patience: 0
@@ -8,7 +8,7 @@ federate:
   client_num: 20
   method: fedsak
   mode: standalone
-  total_round_num: 300
+  total_round_num: 50
   sample_client_rate: 1.0
 data:
   splitter: lda
@@ -22,12 +22,12 @@ aggregator:
   lambda_: 2
   lr_shared: 0.05
   filter_keys:                 # 与 ViT.py 中的 unfreeze_keys 完全对齐
-  - embeddings.position
-  - encoder.layer.9
-  - encoder.layer.10
-  - encoder.layer.11
-  # - layernorm               # 可选：加 LN
-  - classifier
+    - embeddings.position
+    - encoder.layer.9
+    - encoder.layer.10
+    - encoder.layer.11
+    # - layernorm               # 可选：加 LN
+    - classifier
 trainer:
   type: fedsak
 fedsak:                 # ← 额外可选配置
@@ -54,6 +54,6 @@ grad:
 criterion:
   type: CrossEntropyLoss
 eval:
-  freq: 10
+  freq: 2
   metrics: ['acc', 'correct']
   count_flops: False
