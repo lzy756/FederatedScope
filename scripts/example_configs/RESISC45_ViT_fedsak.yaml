@@ -1,6 +1,6 @@
 use_gpu: True
 device: 0
-expname_tag: AID_ViT_fedsak_lda
+expname_tag: RESISC45_ViT_fedsak_lda
 early_stop:
   patience: 0
 seed: 12345
@@ -11,13 +11,13 @@ federate:
   total_round_num: 50
   sample_client_rate: 1.0
 data:
-  splitter: AIDsplitter
+  splitter: RESISC45splitter
   # splitter_args: [{'alpha': 0.01}]
   # splitter_args: [{'client_num': 200}]
-  type: AID
+  type: resisc45
   # splits: [0.6,0.2,0.2]
   # subsample: 0.05
-  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
+  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.485, 0.456, 0.406], 'std': [0.229, 0.224, 0.225]}]]
 aggregator:
   lambda_: 2
   lr_shared: 0.05
@@ -41,7 +41,7 @@ dataloader:
   batch_size: 32
 model:
   type: ViT
-  out_channels: 30
+  out_channels: 45
 train:
   local_update_steps: 1
   batch_or_epoch: epoch
