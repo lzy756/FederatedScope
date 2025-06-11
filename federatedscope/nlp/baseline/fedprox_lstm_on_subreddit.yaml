@@ -7,6 +7,10 @@ federate:
   mode: standalone
   total_round_num: 100
   client_num: 30
+  method: fedprox
+fedprox:
+  use: true
+  mu: 0.1
 data:
   root: data/
   type: subreddit

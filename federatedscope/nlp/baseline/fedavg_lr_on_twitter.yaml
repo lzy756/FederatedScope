@@ -1,27 +1,29 @@
 use_gpu: True
 device: 0
+seed: 12345
 early_stop:
-  patience: 5
+  patience: 0
 federate:
   mode: standalone
   total_round_num: 100
-  sample_client_num: 10
-  share_local_model: True
-  online_aggr: True
+  client_num: 30
 data:
   root: data/
   type: twitter
-  subsample: 0.005
+  subsample: 1.0
 dataloader:
   batch_size: 5
 model:
-  type: lr
-  out_channels: 2
+  type: lstm
+  in_channels: 10000
+  out_channels: 10000
+  hidden: 256
+  embed_size: 200
   dropout: 0.0
 train:
   local_update_steps: 10
   optimizer:
-    lr: 0.0003
+    lr: 8.0
     weight_decay: 0.0
 criterion:
   type: CrossEntropyLoss
@@ -29,6 +31,4 @@ trainer:
   type: nlptrainer
 eval:
   freq: 1
-  metrics: ['acc', 'correct', 'f1']
-  split: [ 'train' ]
-  best_res_update_round_wise_key: 'train_loss'
+  metrics: ['acc', 'correct']
