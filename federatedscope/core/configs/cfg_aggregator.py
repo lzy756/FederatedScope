@@ -23,6 +23,11 @@ def extend_aggregator_cfg(cfg):
     cfg.aggregator.inside_weight = 1.0
     cfg.aggregator.outside_weight = 0.0
 
+    # For FedSAK method
+    cfg.aggregator.lambda_ = 1e-3
+    cfg.aggregator.lr_shared = 0.1
+    cfg.aggregator.filter_keys = []
+
     # --------------- register corresponding check function ----------
     cfg.register_cfg_check_fun(assert_aggregator_cfg)
 

@@ -14,7 +14,7 @@ class LDASplitter(BaseSplitter):
             generates more extreme heterogeneous scenario see \
             ``np.random.dirichlet``
     """
-    def __init__(self, client_num, alpha=0.5):
+    def __init__(self, client_num, alpha=0.1):
         self.alpha = alpha
         super(LDASplitter, self).__init__(client_num)
 

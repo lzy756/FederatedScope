@@ -1,11 +1,12 @@
 use_gpu: True
 device: 0
+seed: 12345
 early_stop:
-  patience: 10
+  patience: 0
 federate:
   mode: standalone
   total_round_num: 100
-  sample_client_num: 10
+  client_num: 30
 data:
   root: data/
   type: subreddit
@@ -29,5 +30,5 @@ criterion:
 trainer:
   type: nlptrainer
 eval:
-  freq: 10
+  freq: 1
   metrics: ['acc', 'correct']

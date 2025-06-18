@@ -1,0 +1,66 @@
+use_gpu: True
+device: 0
+seed: 1234
+early_stop:
+  patience: 0
+federate:
+  mode: standalone
+  total_round_num: 1000
+  client_num: 30
+  method: fedsak
+aggregator:
+  lambda_: 2
+  lr_shared: 0.05
+  filter_keys:                 
+    - encoder.weight
+    - rnn.weight_ih_l0
+    - rnn.weight_hh_l0
+    - rnn.bias_ih_l0
+    - rnn.bias_hh_l0
+    - rnn.weight_ih_l1
+    - rnn.weight_hh_l1
+    - rnn.bias_ih_l1
+    - rnn.bias_hh_l1 
+    - decoder.weight
+    - decoder.bias
+fedsak:               
+  share_patterns:
+    - encoder.weight
+    - rnn.weight_ih_l0
+    - rnn.weight_hh_l0
+    - rnn.bias_ih_l0
+    - rnn.bias_hh_l0
+    - rnn.weight_ih_l1
+    - rnn.weight_hh_l1
+    - rnn.bias_ih_l1
+    - rnn.bias_hh_l1 
+    - decoder.weight
+    - decoder.bias
+fedprox: 
+  use: false
+  mu: 0
+data:
+  root: data/
+  type: shakespeare
+  subsample: 0.2
+  splits: [0.6,0.2,0.2]
+model:
+  type: lstm
+  in_channels: 80
+  out_channels: 80
+  embed_size: 8
+  hidden: 256
+  dropout: 0.0
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.8
+    weight_decay: 0.0
+criterion:
+  type: character_loss
+trainer:
+  type: fedsak
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']

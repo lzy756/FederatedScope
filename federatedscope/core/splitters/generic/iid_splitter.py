@@ -1,12 +1,11 @@
 import numpy as np
 from federatedscope.core.splitters import BaseSplitter
 
-
 class IIDSplitter(BaseSplitter):
     """
-    This splitter splits dataset following the independent and identically \
-    distribution.
-
+    This splitter splits dataset following the independent and identically
+    distribution (IID).
+    
     Args:
         client_num: the dataset will be split into ``client_num`` pieces
     """
@@ -17,11 +16,15 @@ class IIDSplitter(BaseSplitter):
         from torch.utils.data import Dataset, Subset
 
         length = len(dataset)
-        index = [x for x in range(length)]
+        index = np.arange(length)
         np.random.shuffle(index)
-        idx_slice = np.split_array(dataset, self.client_num)
+
+        # ✅ 用索引列表而不是 dataset 本体来切分
+        idx_slices = np.array_split(index, self.client_num)
+
         if isinstance(dataset, Dataset):
-            data_list = [Subset(dataset, idxs) for idxs in idx_slice]
+            data_list = [Subset(dataset, idxs.tolist()) for idxs in idx_slices]
         else:
-            data_list = [[dataset[idx] for idx in idxs] for idxs in idx_slice]
+            data_list = [[dataset[idx] for idx in idxs] for idxs in idx_slices]
+
         return data_list

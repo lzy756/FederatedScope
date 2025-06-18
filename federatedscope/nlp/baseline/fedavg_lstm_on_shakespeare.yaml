@@ -1,11 +1,12 @@
 use_gpu: True
 device: 0
+seed: 12345
 early_stop:
-  patience: 10
+  patience: 0
 federate:
   mode: standalone
   total_round_num: 1000
-  sample_client_rate: 0.2
+  client_num: 50
 data:
   root: data/
   type: shakespeare
@@ -29,5 +30,5 @@ criterion:
 trainer:
   type: nlptrainer
 eval:
-  freq: 10
+  freq: 1
   metrics: ['acc', 'correct']
