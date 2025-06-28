@@ -34,6 +34,10 @@ def wrap_fedprox_trainer(
                                        trigger='on_fit_end',
                                        insert_pos=-1)
 
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("FedProx regularizer has been wrapped into the trainer.")
+
     return base_trainer
 
 

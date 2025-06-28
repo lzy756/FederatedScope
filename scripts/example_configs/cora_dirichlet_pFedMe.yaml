@@ -1,0 +1,77 @@
+
+# 是否使用GPU以及设备号（True表示使用GPU）
+use_gpu: True
+device: 0
+
+# --------------------------------------------------
+# 1）联邦模式：Standalone + 单客户端
+# --------------------------------------------------
+federate:
+  method: pfedme
+  mode: standalone
+  sample_client_rate: 1.0  # 每轮使用所有客户端
+  client_num: 10
+  total_round_num: 100
+  data_weighted_aggr: False
+  make_global_eval: False
+
+personalization:
+  K: 3                     # pFedMe 内部迭代次数
+  beta: 1.0                # pFedMe 外层正则系数
+  local_param: []          # 可个性化的参数列表（空表示所有可训练参数都个性化）
+  local_update_steps: 3    # pFedMe 本地迭代步数（每轮内部迭代次数）
+  lr: 0.8                  # pFedMe 内部更新学习率
+  regular_weight: 1.0      # pFedMe Moreau 正则权重
+  share_non_trainable_para: False
+
+
+
+# --------------------------------------------------
+# 2）数据集：Cora
+# --------------------------------------------------
+data:
+  root: data/          # 相对于仓库根目录的 data 目录
+  type: cora_pruned           # 指定使用 Cora
+
+# --------------------------------------------------
+# 3）Dataloader：PyG 全图
+# --------------------------------------------------
+dataloader:
+  type: pyg
+  batch_size: 1        # 全批次训练
+
+# --------------------------------------------------
+# 4）模型：GCN
+# --------------------------------------------------
+model:
+  type: gcn
+  hidden: 64
+  dropout: 0.5
+  out_channels: 7      # Cora 有 7 类
+  layer: 1                 # GCN层数（两层GCN）
+
+# --------------------------------------------------
+# 5）损失与优化器
+# --------------------------------------------------
+criterion:
+  type: CrossEntropyLoss
+
+train:
+  local_update_steps: 50  # 每轮只跑 1 步，全图梯度
+  optimizer:
+    type: SGD
+    lr: 0.25
+    weight_decay: 5e-4
+
+# --------------------------------------------------
+# 6）Trainer & Evaluator
+# --------------------------------------------------
+trainer:
+  type: nodefullbatch_trainer
+
+eval:
+  freq: 1
+  split: ['val','test']
+  metrics: ['acc','loss']
+
+

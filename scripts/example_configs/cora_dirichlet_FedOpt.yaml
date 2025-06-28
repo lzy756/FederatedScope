@@ -1,0 +1,72 @@
+
+# 是否使用GPU以及设备号（True表示使用GPU）
+use_gpu: True
+device: 0
+
+# --------------------------------------------------
+# 1）联邦模式：Standalone + 单客户端
+# --------------------------------------------------
+federate:
+  mode: standalone
+  client_num: 10
+  total_round_num: 30
+  data_weighted_aggr: False
+  make_global_eval: True
+
+fedopt:
+  use: True                # 启用 FedOpt
+  optimizer:
+    type: Adam             # 服务器端优化器类型
+    lr: 1.0               # 服务器端学习率
+  annealing: False        # 学习率衰减设置（可选）
+
+
+# --------------------------------------------------
+# 2）数据集：Cora
+# --------------------------------------------------
+data:
+  root: data/          # 相对于仓库根目录的 data 目录
+  type: cora_disconnected           # 指定使用 Cora
+
+# --------------------------------------------------
+# 3）Dataloader：PyG 全图
+# --------------------------------------------------
+dataloader:
+  type: pyg
+  batch_size: 1        # 全批次训练
+
+# --------------------------------------------------
+# 4）模型：GCN
+# --------------------------------------------------
+model:
+  type: gcn
+  hidden: 64
+  dropout: 0.5
+  out_channels: 7      # Cora 有 7 类
+  layer: 1                 # GCN层数（两层GCN）
+
+# --------------------------------------------------
+# 5）损失与优化器
+# --------------------------------------------------
+criterion:
+  type: CrossEntropyLoss
+
+train:
+  local_update_steps: 50  # 每轮只跑 1 步，全图梯度
+  optimizer:
+    type: SGD
+    lr: 0.25
+    weight_decay: 5e-4
+
+# --------------------------------------------------
+# 6）Trainer & Evaluator
+# --------------------------------------------------
+trainer:
+  type: nodefullbatch_trainer
+
+eval:
+  freq: 1
+  split: ['val','test']
+  metrics: ['acc','loss']
+
+

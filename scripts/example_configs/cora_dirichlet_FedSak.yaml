@@ -1,0 +1,79 @@
+
+# 是否使用GPU以及设备号（True表示使用GPU）
+use_gpu: True
+device: 0
+
+# --------------------------------------------------
+# 1）联邦模式：Standalone + 单客户端
+# --------------------------------------------------
+federate:
+  mode: standalone
+  method: fedsak
+  client_num: 10
+  total_round_num: 100
+  data_weighted_aggr: False
+  make_global_eval: False
+
+
+# --------------------------------------------------
+# 2）数据集：Cora
+# --------------------------------------------------
+data:
+  root: data/          # 相对于仓库根目录的 data 目录
+  type: cora_pruned           # 指定使用 Cora
+
+aggregator:
+  lambda_: 0.02
+  lr_shared: 0.5
+  filter_keys:
+    - convs.0.lin
+
+
+# --------------------------------------------------
+# 3）Dataloader：PyG 全图
+# --------------------------------------------------
+dataloader:
+  type: pyg
+  batch_size: 1        # 全批次训练
+
+# --------------------------------------------------
+# 4）模型：GCN
+# --------------------------------------------------
+model:
+  type: gcn
+  hidden: 64
+  dropout: 0.5
+  out_channels: 7      # Cora 有 7 类
+  layer: 1                # GCN层数（两层GCN）
+
+# --------------------------------------------------
+# 5）损失与优化器
+# --------------------------------------------------
+criterion:
+  type: CrossEntropyLoss
+
+train:
+  local_update_steps: 30  # 每轮只跑 1 步，全图梯度
+  optimizer:
+    type: Adam
+    lr: 0.05
+    weight_decay: 0.01
+
+grad:
+  grad_clip: 5.0
+
+# --------------------------------------------------
+# 6）Trainer & Evaluator
+# --------------------------------------------------
+trainer:
+  type: fedsak
+fedsak:                 # ← 额外可选配置
+  share_patterns:
+    - convs.0.lin
+
+eval:
+  freq: 1
+  split: ['val','test']
+  metrics: ['acc','loss']
+
+verbose: 2

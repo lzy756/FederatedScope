@@ -1,10 +1,12 @@
-from federatedscope.register import register_regularizer
+from federatedscope.register import register_regularizer, logger
+
 try:
     from torch.nn import Module
     import torch
 except ImportError:
     Module = object
     torch = None
+
 
 REGULARIZER_NAME = "proximal_regularizer"
 
@@ -27,7 +29,10 @@ class ProximalRegularizer(Module):
         norm = 0.
         for w_init, w in zip(ctx.weight_init, ctx.model.parameters()):
             norm += torch.pow(torch.norm(w - w_init, p), p)
-        return norm * 1. / float(p)
+        proximal_loss = norm * 1. / float(p)
+        # 添加调试日志，输出 proximal loss 数值
+        # logger.info(f"[FedProx Debug] Proximal loss: {proximal_loss.item()}")
+        return proximal_loss
 
 
 def call_proximal_regularizer(type):
