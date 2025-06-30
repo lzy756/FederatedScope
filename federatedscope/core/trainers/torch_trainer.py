@@ -1,6 +1,6 @@
 import os
 import logging
-
+from torch_geometric.data import Data, Batch
 import numpy as np
 try:
     import torch
@@ -275,26 +275,47 @@ class GeneralTorchTrainer(Trainer):
 
     def _hook_on_batch_forward(self, ctx):
         """
-        Note:
-          The modified attributes and according operations are shown below:
-            ==================================  ===========================
-            Attribute                           Operation
-            ==================================  ===========================
-            ``ctx.y_true``                      Move to `ctx.device`
-            ``ctx.y_prob``                      Forward propagation get y_prob
-            ``ctx.loss_batch``                  Calculate the loss
-            ``ctx.batch_size``                  Get the batch_size
-            ==================================  ===========================
+        支持 PyG Batch 输入，自动搬运到 GPU 并解包为 x, edge_index, label；
+        否则沿用老逻辑，拆成两个 Tensor 并调用前向。
         """
-        x, label = [_.to(ctx.device) for _ in ctx.data_batch]
-        pred = ctx.model(x)
-        if len(label.size()) == 0:
+        batch_data = ctx.data_batch
+        # A: DataBatch 对象
+        if isinstance(batch_data, (Data, Batch)):
+            data_obj = batch_data.to(ctx.device)
+            x = data_obj.x
+            edge_index = data_obj.edge_index
+            label = data_obj.y.to(ctx.device)
+            pred = ctx.model(data_obj)
+        # B: (Batch, label) 格式
+        elif isinstance(batch_data, tuple) and isinstance(batch_data[0], (Data, Batch)):
+            data_obj, label = batch_data
+            data_obj = data_obj.to(ctx.device)
+            x = data_obj.x
+            edge_index = data_obj.edge_index
+            label = label.to(ctx.device)
+            pred = ctx.model(data_obj)
+        # C: list[Data] 格式
+        elif isinstance(batch_data, list) and all(isinstance(d, Data) for d in batch_data):
+            data_obj = Batch.from_data_list(batch_data).to(ctx.device)
+            x = data_obj.x
+            edge_index = data_obj.edge_index
+            label = data_obj.y.to(ctx.device)
+            pred = ctx.model(data_obj)
+        else:
+            # 兼容原生逻辑：batch_data 内直接是 Tensor
+            x, label = [item.to(ctx.device) for item in batch_data]
+            pred = ctx.model(x)
+
+        # 对于标量标签，增加维度
+        if label.dim() == 0:
             label = label.unsqueeze(0)
 
+        # 设置上下文变量
         ctx.y_true = CtxVar(label, LIFECYCLE.BATCH)
         ctx.y_prob = CtxVar(pred, LIFECYCLE.BATCH)
         ctx.loss_batch = CtxVar(ctx.criterion(pred, label), LIFECYCLE.BATCH)
         ctx.batch_size = CtxVar(len(label), LIFECYCLE.BATCH)
+
 
     def _hook_on_batch_forward_flop_count(self, ctx):
         """

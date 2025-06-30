@@ -643,61 +643,59 @@ class Server(BaseServer):
 
         Arguments:
             msg_type: 'model_para' or other user defined msg_type
-            sample_client_num: the number of sampled clients in the broadcast \
-                behavior. And ``sample_client_num = -1`` denotes to \
-                broadcast to all the clients.
-            filter_unseen_clients: whether filter out the unseen clients that \
-                do not contribute to FL process by training on their local \
-                data and uploading their local model update. The splitting is \
-                useful to check participation generalization gap in [ICLR'22, \
-                What Do We Mean by Generalization in Federated Learning?] \
-                You may want to set it to be False when in evaluation stage
+            sample_client_num: the number of sampled clients in the broadcast
+            filter_unseen_clients: whether filter out unseen clients
         """
         if filter_unseen_clients:
-            # to filter out the unseen clients when sampling
             self.sampler.change_state(self.unseen_clients_id, 'unseen')
 
+        # 选择接收者
         if sample_client_num > 0:
             receiver = self.sampler.sample(size=sample_client_num)
         else:
-            # broadcast to all clients
             receiver = list(self.comm_manager.neighbors.keys())
             if msg_type == 'model_para':
                 self.sampler.change_state(receiver, 'working')
 
+        # 注入噪声（如有）
         if self._noise_injector is not None and msg_type == 'model_para':
-            # Inject noise only when broadcast parameters
-            for model_idx_i in range(len(self.models)):
-                num_sample_clients = [
-                    v["num_sample"] for v in self.join_in_info.values()
-                ]
-                self._noise_injector(self._cfg, num_sample_clients,
-                                     self.models[model_idx_i])
+            for model_idx in range(len(self.models)):
+                num_sample_clients = [v["num_sample"] for v in self.join_in_info.values()]
+                self._noise_injector(self._cfg, num_sample_clients, self.models[model_idx])
 
-        skip_broadcast = self._cfg.federate.method in ["local", "global"]
-        if self.model_num > 1:
-            model_para = [{} if skip_broadcast else model.state_dict()
-                          for model in self.models]
+        # 计算是否跳过广播（local/global 不广播）
+        skip_broadcast = self._cfg.federate.method.lower() in ["local", "global"]
+
+        # **以下为新增逻辑：FedAvg 第0轮不发模型**
+        is_fedavg = self._cfg.federate.method.lower() == 'fedavg'
+        is_first_round = (self.state == 0)
+
+        if is_first_round and is_fedavg:
+            # 第0轮，FedAvg 强制发空 dict，让客户端自行初始化本地模型
+            if self.model_num > 1:
+                model_para = [{} for _ in self.models]
+            else:
+                model_para = {}
         else:
-            model_para = {} if skip_broadcast else self.models[0].state_dict()
+            # 其余情况按原逻辑广播
+            if self.model_num > 1:
+                model_para = [{} if skip_broadcast else m.state_dict()
+                              for m in self.models]
+            else:
+                model_para = {} if skip_broadcast else self.models[0].state_dict()
 
-        # quantization
+        # 量化（如有）
         if msg_type == 'model_para' and not skip_broadcast and \
-                self._cfg.quantization.method == 'uniform':
-            from federatedscope.core.compression import \
-                symmetric_uniform_quantization
+           self._cfg.quantization.method == 'uniform':
+            from federatedscope.core.compression import symmetric_uniform_quantization
             nbits = self._cfg.quantization.nbits
             if self.model_num > 1:
-                model_para = [
-                    symmetric_uniform_quantization(x, nbits)
-                    for x in model_para
-                ]
+                model_para = [symmetric_uniform_quantization(x, nbits) for x in model_para]
             else:
                 model_para = symmetric_uniform_quantization(model_para, nbits)
 
-        # We define the evaluation happens at the end of an epoch
+        # 发送消息
         rnd = self.state - 1 if msg_type == 'evaluate' else self.state
-
         self.comm_manager.send(
             Message(msg_type=msg_type,
                     sender=self.ID,
@@ -705,12 +703,13 @@ class Server(BaseServer):
                     state=min(rnd, self.total_round_num),
                     timestamp=self.cur_timestamp,
                     content=model_para))
+
+        # 在线聚合时重置
         if self._cfg.federate.online_aggr:
-            for idx in range(self.model_num):
-                self.aggregators[idx].reset()
+            for agg in self.aggregators:
+                agg.reset()
 
         if filter_unseen_clients:
-            # restore the state of the unseen clients within sampler
             self.sampler.change_state(self.unseen_clients_id, 'seen')
 
     def broadcast_client_address(self):

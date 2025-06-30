@@ -1,27 +1,31 @@
 use_gpu: True
 device: 0
 early_stop:
-  patience: 20
   improve_indicator_mode: mean
+  patience: 10
 federate:
   mode: 'standalone'
   make_global_eval: False
   total_round_num: 400
   share_local_model: False
+  data_weighted_aggr: True
 data:
   root: data/
   type: graph_multi_domain_mol
-  pre_transform: ['Constant', {'value':1.0, 'cat':False}]
+  pre_transform: ["Constant", {"value": 1.0,  "cat": False}]
+  transform:
+    - [ "PadFeatures", { "target_dim": 37 } ]
+    - [ "Constant",  { "value": 1.0, "cat": False } ]
+personalization:
+  local_param: ['clf']
 dataloader:
   type: pyg
 model:
   type: gin
   hidden: 64
+  dropout: 0.5
   out_channels: 0
   task: graph
-personalization:
-  local_param: ['encoder_atom', 'encoder', 'clf']   # to handle size-different pre & post layers
-  # local_param: [ 'encoder_atom', 'encoder', 'clf', 'norms' ]  # pre, post + FedBN
 train:
   local_update_steps: 1
   optimizer:

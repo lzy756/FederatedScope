@@ -119,9 +119,18 @@ class FedSAKServer(Server):
                 self.sample_client_ids = receiver
 
         # 广播开始训练的消息 - 不需要发送模型参数，客户端将使用自己当前的模型
+        # 广播开始训练的消息 - 不需要发送模型参数，客户端将使用自己当前的模型
         for rcv_idx in receiver:
-            # 对于首轮训练或没有个性化切片的情况，需要发送初始模型
-            if self.state == 0 or not hasattr(self, "personalized_slices"):
+            if self.state == 0:
+                # 第0轮不下发 Server 模型，让客户端自行初始化
+                self.comm_manager.send(
+                    Message(msg_type="trigger_train",
+                            sender=self.ID,
+                            receiver=[rcv_idx],
+                            state=self.state,
+                            content=None))
+            elif not hasattr(self, "personalized_slices"):
+                # 如果后续还没有计算出 personalized_slices，再下发 Server 模型
                 content = self.model.state_dict()
                 self.comm_manager.send(
                     Message(msg_type="model_para",
@@ -130,8 +139,7 @@ class FedSAKServer(Server):
                             state=self.state,
                             content=content))
             else:
-                # 如果客户端有个性化切片，使用trigger_train消息类型触发训练
-                # 如果没有个性化切片(新加入的客户端)，发送空内容，客户端会使用现有模型
+                # 如果已有 personalized_slices，就按原逻辑 send trigger_train 或 update_model
                 content = None
                 if rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]

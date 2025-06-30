@@ -1,82 +1,89 @@
 from importlib import import_module
 import federatedscope.register as register
 
+# 支持自定义和 PyG transforms
+import torch_geometric.transforms as _pyg_transforms
+import federatedscope.contrib.data.transforms as _custom_transforms
 
 def get_transform(config, package):
     """
     This function is to build transforms applying to dataset.
-
     Args:
-        config: ``CN`` from ``federatedscope/core/configs/config.py``
-        package: one of package from \
-        ``['torchvision', 'torch_geometric', 'torchtext', 'torchaudio']``
-
+        config: CN from config.py
+        package: one of ['torchvision','torch_geometric',...]
     Returns:
-        Dict of transform functions.
+        Tuple of dicts: (train_funcs, val_funcs, test_funcs)
     """
     transform_funcs = {}
     for name in ['transform', 'target_transform', 'pre_transform']:
-        if config.data[name]:
+        if config.data.get(name):
             transform_funcs[name] = config.data[name]
 
     val_transform_funcs = {}
     for name in ['val_transform', 'val_target_transform', 'val_pre_transform']:
-        suf_name = name.split('val_')[1]
-        if config.data[name]:
-            val_transform_funcs[suf_name] = config.data[name]
+        suf = name.split('val_')[1]
+        if config.data.get(name):
+            val_transform_funcs[suf] = config.data[name]
 
     test_transform_funcs = {}
-    for name in [
-            'test_transform', 'test_target_transform', 'test_pre_transform'
-    ]:
-        suf_name = name.split('test_')[1]
-        if config.data[name]:
-            test_transform_funcs[suf_name] = config.data[name]
+    for name in ['test_transform', 'test_target_transform', 'test_pre_transform']:
+        suf = name.split('test_')[1]
+        if config.data.get(name):
+            test_transform_funcs[suf] = config.data[name]
 
-    # Transform are all `[]`, do not import package and return dict with
-    # None value
-    if len(transform_funcs) == 0 and len(val_transform_funcs) == 0 and len(
-            test_transform_funcs) == 0:
+    # no transforms
+    if not transform_funcs and not val_transform_funcs and not test_transform_funcs:
         return {}, {}, {}
 
-    transforms = getattr(import_module(package), 'transforms')
+    # import package transforms module
+    transforms_module = getattr(import_module(package), 'transforms')
 
     def convert(trans):
-        # Recursively converting expressions to functions
-        if isinstance(trans[0], str):
+        # list-form: ["Name", {args}]
+        if isinstance(trans, list) and trans and isinstance(trans[0], str):
             if len(trans) == 1:
                 trans.append({})
-            transform_type, transform_args = trans
+            name, args = trans[0], trans[1]
+            # 1. 注册表优先
             for func in register.transform_dict.values():
-                transform_func = func(transform_type, transform_args)
-                if transform_func is not None:
-                    return transform_func
-            transform_func = getattr(transforms,
-                                     transform_type)(**transform_args)
-            return transform_func
-        else:
-            transform = [convert(x) for x in trans]
-            if hasattr(transforms, 'Compose'):
-                return transforms.Compose(transform)
-            elif hasattr(transforms, 'Sequential'):
-                return transforms.Sequential(transform)
+                tf = func(name, args)
+                if tf is not None:
+                    return tf
+            # 2. PyG transforms
+            if hasattr(_pyg_transforms, name):
+                return getattr(_pyg_transforms, name)(**args)
+            # 3. 自定义 transforms
+            if hasattr(_custom_transforms, name):
+                return getattr(_custom_transforms, name)(**args)
+            # 4. 包内 transforms
+            if hasattr(transforms_module, name):
+                return getattr(transforms_module, name)(**args)
+            raise ValueError(f"Unknown transform: {name}")
+        # recursive for nested lists
+        elif isinstance(trans, list):
+            built = [convert(x) for x in trans]
+            if hasattr(transforms_module, 'Compose'):
+                return transforms_module.Compose(built)
+            elif hasattr(transforms_module, 'Sequential'):
+                return transforms_module.Sequential(built)
             else:
-                return transform
+                return built
+        else:
+            # assume already a callable or transform
+            return trans
 
-    # return composed transform or return list of transform
+    # apply convert to each entry
     if transform_funcs:
-        for key in transform_funcs:
-            transform_funcs[key] = convert(config.data[key])
-
+        for k in list(transform_funcs):
+            transform_funcs[k] = convert(transform_funcs[k])
     if val_transform_funcs:
-        for key in val_transform_funcs:
-            val_transform_funcs[key] = convert(config.data[key])
+        for k in list(val_transform_funcs):
+            val_transform_funcs[k] = convert(val_transform_funcs[k])
     else:
         val_transform_funcs = transform_funcs
-
     if test_transform_funcs:
-        for key in test_transform_funcs:
-            test_transform_funcs[key] = convert(config.data[key])
+        for k in list(test_transform_funcs):
+            test_transform_funcs[k] = convert(test_transform_funcs[k])
     else:
         test_transform_funcs = transform_funcs
 

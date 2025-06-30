@@ -1,13 +1,18 @@
 use_gpu: True
 device: 0
 early_stop:
-  patience: 20
   improve_indicator_mode: mean
+  patience: 10
 federate:
   mode: 'standalone'
   make_global_eval: False
+  method: fedsak
   total_round_num: 400
   share_local_model: False
+aggregator:
+  lambda_: 2
+  lr_shared: 1
+  filter_keys: [""]
 data:
   root: data/
   type: graph_multi_domain_mol
@@ -20,11 +25,8 @@ model:
   dropout: 0.5
   out_channels: 0
   task: graph
-personalization:
-  # local_param: ['encoder_atom', 'encoder', 'clf']   # to handle size-different pre & post layers
-  local_param: [ 'encoder_atom', 'encoder', 'clf', 'norms' ]  # pre, post + FedBN
 train:
-  local_update_steps: 17
+  local_update_steps: 30
   optimizer:
     lr: 0.5
     weight_decay: 0.0005
@@ -32,7 +34,7 @@ train:
 criterion:
   type: CrossEntropyLoss
 trainer:
-  type: graphminibatch_trainer
+  type: fedsak
 eval:
   freq: 5
   metrics: ['acc', 'correct']

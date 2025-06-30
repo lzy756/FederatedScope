@@ -252,7 +252,7 @@ class dataset_ContextualSBM(InMemoryDataset):
                                                     pre_transform)
 
         #         ipdb.set_trace()
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only=False)
         # overwrite the dataset attribute n, p, d, Lambda, mu
         if isinstance(self._Lambda, list):
             self.Lambda = self.data.Lambda.numpy()

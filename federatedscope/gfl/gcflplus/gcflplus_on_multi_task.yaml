@@ -1,12 +1,15 @@
 use_gpu: True
 device: 0
+early_stop:
+  improve_indicator_mode: mean
+  patience: 10
 federate:
   mode: standalone
-  total_round_num: 100
+  total_round_num: 400
   method: gcflplus
 data:
   root: data/
-  type: graph_multi_domain_mix
+  type: graph_multi_domain_mol
   pre_transform: ['Constant', {'value':1.0, 'cat':False}]
 dataloader:
   type: pyg
@@ -22,7 +25,7 @@ gcflplus:
   seq_length: 5
   standardize: False
 train:
-  batch_or_epoch: epoch
+  local_update_steps: 16
   optimizer:
     lr: 0.5
     weight_decay: 0.0005
@@ -34,4 +37,5 @@ personalization:
 trainer:
   type: graphminibatch_trainer
 eval:
+  freq: 5
   metrics: ['acc', 'correct']

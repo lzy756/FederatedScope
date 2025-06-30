@@ -1,4 +1,5 @@
 from os.path import dirname, basename, isfile, join
+from .transforms import PadFeatures
 import glob
 
 modules = glob.glob(join(dirname(__file__), "*.py"))
