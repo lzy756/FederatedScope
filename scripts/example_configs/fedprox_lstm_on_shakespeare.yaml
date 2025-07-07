@@ -1,44 +1,45 @@
 use_gpu: True
 device: 0
+seed: 1234
 early_stop:
   patience: 0
-seed: 12345
 federate:
   mode: standalone
   total_round_num: 500
   sample_client_rate: 1
   client_num: 25
+  method: fedprox
 data:
   root: data/
-  type: ut_har
-  # splits: [0.8,0.1,0.1]
-  # splitter: ut_har_splitter
+  type: shakespeare
+  subsample: 0.2
+  splits: [0.6,0.2,0.2]
   splitter: lda
-  splitter_args: [{'alpha': 0.5}]
+  splitter_args: [{'alpha': 1}]
+  consistent_label_distribution: False
 dataloader:
   batch_size: 32
 model:
-  type: rnn
-  out_channels: 7
+  type: lstm
+  in_channels: 80
+  out_channels: 80
+  embed_size: 8
+  hidden: 256
+  dropout: 0.0
 train:
-  local_update_steps: 5
+  local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    type: Adam
-    lr: 0.0005
-    weight_decay: 0.01
-grad:
-  grad_clip: 5.0
+    lr: 0.8
+    weight_decay: 0.0
 criterion:
   type: CrossEntropyLoss
-# trainer:
-#   type: ut_har_rnn_trainer
+trainer:
+  type: nlptrainer
 eval:
   freq: 1
   metrics: ['acc', 'loss']
   best_res_update_round_wise_key: test_loss
-# wandb:
-#   use: True
-#   name_project: ut_har_rnn
-#   name_user: 2237617390-
-
+fedprox:
+  use: True
+  mu: 0.1

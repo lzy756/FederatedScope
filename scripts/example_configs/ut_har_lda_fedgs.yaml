@@ -7,14 +7,15 @@ federate:
   mode: standalone
   total_round_num: 500
   sample_client_rate: 1
-  client_num: 25
+  client_num: 10
+  method: fedgs
 data:
   root: data/
   type: ut_har
   # splits: [0.8,0.1,0.1]
   # splitter: ut_har_splitter
   splitter: lda
-  splitter_args: [{'alpha': 0.5}]
+  splitter_args: ['alpha': 0.5]
 dataloader:
   batch_size: 32
 model:
@@ -41,4 +42,5 @@ eval:
 #   use: True
 #   name_project: ut_har_rnn
 #   name_user: 2237617390-
-
+fedgs:
+  num_groups: 2

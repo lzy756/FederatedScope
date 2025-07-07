@@ -15,6 +15,7 @@ from sklearn.model_selection import train_test_split
 from federatedscope.core.data.utils import save_local_data, download_url
 from federatedscope.cv.dataset.leaf import LEAF
 from federatedscope.nlp.dataset.utils import *
+from torch.utils.data import Dataset
 
 
 class LEAF_NLP(LEAF):
@@ -267,3 +268,42 @@ class LEAF_NLP(LEAF):
                                 val_data=val_data,
                                 val_targets=val_targets)
                 idx += 1
+
+    def get_train_data(self):
+        train_data, train_targets = [], []
+        for idx in self.data_dict:
+            if 'train' in self.data_dict[idx]:
+                data, targets = self.data_dict[idx]['train']
+                train_data.extend(data)
+                train_targets.extend(targets)
+        return NLPDataset(train_data, train_targets)
+
+    def get_val_data(self):
+        val_data, val_targets = [], []
+        for idx in self.data_dict:
+            if 'val' in self.data_dict[idx]:
+                data, targets = self.data_dict[idx]['val']
+                val_data.extend(data)
+                val_targets.extend(targets)
+        return NLPDataset(val_data, val_targets)
+
+    def get_test_data(self):
+        test_data, test_targets = [], []
+        for idx in self.data_dict:
+            if 'test' in self.data_dict[idx]:
+                data, targets = self.data_dict[idx]['test']
+                test_data.extend(data)
+                test_targets.extend(targets)
+        return NLPDataset(test_data, test_targets)
+
+
+class NLPDataset(Dataset):
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]

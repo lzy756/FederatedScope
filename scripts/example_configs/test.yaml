@@ -8,13 +8,14 @@ federate:
   total_round_num: 500
   sample_client_rate: 1
   client_num: 25
+  method: fedgs
 data:
   root: data/
   type: ut_har
-  # splits: [0.8,0.1,0.1]
-  # splitter: ut_har_splitter
-  splitter: lda
-  splitter_args: [{'alpha': 0.5}]
+  splitter: fedgs
+  splitter_args: [{
+    'alpha': 0.5
+  }]
 dataloader:
   batch_size: 32
 model:
@@ -31,14 +32,25 @@ grad:
   grad_clip: 5.0
 criterion:
   type: CrossEntropyLoss
-# trainer:
-#   type: ut_har_rnn_trainer
 eval:
   freq: 1
   metrics: ['acc', 'loss']
   best_res_update_round_wise_key: test_loss
-# wandb:
-#   use: True
-#   name_project: ut_har_rnn
-#   name_user: 2237617390-
-
+fedgs:
+  num_groups: 5
+aggregator:
+  lambda_: 0.1
+  lr_shared: 0.05
+  filter_keys:
+  - rnn.weight
+  - rnn.bias
+  - fc.weight
+  - fc.bias
+fedsak:
+  share_patterns:
+    - rnn.weight
+    - rnn.bias
+    - fc.weight
+    - fc.bias
+trainer:
+  type: fedsak

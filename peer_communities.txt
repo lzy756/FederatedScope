@@ -1,0 +1,92 @@
+Peer Community Grouping Information
+==================================================
+
+Total number of communities: 7
+
+Community #1
+Members: [8, 10, 11, 14, 18, 21]
+Community overall distribution: [101, 25, 71, 94, 42, 75, 24]
+Distribution percentages: ['23.38%', '5.79%', '16.44%', '21.76%', '9.72%', '17.36%', '5.56%']
+Total Samples: 432
+------------------------------
+Community #2
+Members: [1, 6, 15, 25]
+Community overall distribution: [44, 8, 165, 9, 420, 27, 90]
+Distribution percentages: ['5.77%', '1.05%', '21.63%', '1.18%', '55.05%', '3.54%', '11.80%']
+Total Samples: 763
+------------------------------
+Community #3
+Members: [9, 13, 20]
+Community overall distribution: [28, 22, 559, 21, 69, 4, 29]
+Distribution percentages: ['3.83%', '3.01%', '76.37%', '2.87%', '9.43%', '0.55%', '3.96%']
+Total Samples: 732
+------------------------------
+Community #4
+Members: [12, 19, 5]
+Community overall distribution: [168, 11, 88, 106, 29, 115, 15]
+Distribution percentages: ['31.58%', '2.07%', '16.54%', '19.92%', '5.45%', '21.62%', '2.82%']
+Total Samples: 532
+------------------------------
+Community #5
+Members: [3, 22, 24]
+Community overall distribution: [72, 198, 62, 3, 31, 61, 21]
+Distribution percentages: ['16.07%', '44.20%', '13.84%', '0.67%', '6.92%', '13.62%', '4.69%']
+Total Samples: 448
+------------------------------
+Community #6
+Members: [2, 7, 17]
+Community overall distribution: [84, 28, 100, 59, 251, 8, 30]
+Distribution percentages: ['15.00%', '5.00%', '17.86%', '10.54%', '44.82%', '1.43%', '5.36%']
+Total Samples: 560
+------------------------------
+Community #7
+Members: [23, 4, 16]
+Community overall distribution: [28, 62, 127, 104, 125, 30, 34]
+Distribution percentages: ['5.49%', '12.16%', '24.90%', '20.39%', '24.51%', '5.88%', '6.67%']
+Total Samples: 510
+------------------------------
+
+Raw Data (JSON format):
+{
+  "peer_communities": [
+    [
+      8,
+      10,
+      11,
+      14,
+      18,
+      21
+    ],
+    [
+      1,
+      6,
+      15,
+      25
+    ],
+    [
+      9,
+      13,
+      20
+    ],
+    [
+      12,
+      19,
+      5
+    ],
+    [
+      3,
+      22,
+      24
+    ],
+    [
+      2,
+      7,
+      17
+    ],
+    [
+      23,
+      4,
+      16
+    ]
+  ]
+}

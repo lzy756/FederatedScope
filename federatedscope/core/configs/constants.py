@@ -21,7 +21,8 @@ AGGREGATOR_TYPE = {
     "gcflplus": "clients_avg",
     "fedgc": "clients_avg",
     "fedopt": "fedopt",
-    "fedsak": "fedsak"
+    "fedsak": "fedsak",
+    "fedgs": "fedgs"
 }
 
 CLIENTS_TYPE = {

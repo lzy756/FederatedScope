@@ -16,6 +16,7 @@ from federatedscope.core.aggregators.bulyan_aggregator import \
 from federatedscope.core.aggregators.normbounding_aggregator import \
     NormboundingAggregator
 from federatedscope.core.aggregators.fedsak_aggregator import FedSAKAggregator
+from federatedscope.core.aggregators.fedgs_aggregator import FedGSAggregator
 
 __all__ = [
     'Aggregator',
@@ -31,4 +32,5 @@ __all__ = [
     'BulyanAggregator',
     'NormboundingAggregator',
     'FedSAKAggregator',
+    'FedGSAggregator',
 ]
