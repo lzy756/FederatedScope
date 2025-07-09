@@ -2,21 +2,41 @@ use_gpu: True
 device: 0
 early_stop:
   improve_indicator_mode: mean
-  patience: 10
+  patience: 20
 federate:
   mode: 'standalone'
   make_global_eval: False
   method: fedsak
-  total_round_num: 400
+  client_num: 10
+  total_round_num: 100
   share_local_model: False
 aggregator:
-  lambda_: 2
+  lambda_: 0.005
   lr_shared: 1
-  filter_keys: [""]
+  filter_keys:
+    - "encoder_atom.atom_embedding_list"
+    - "gnn.convs.*.nn.linears"
+    - "gnn.convs.*.nn.norms"
+fedsak:
+  share_patterns:
+    - "encoder_atom.atom_embedding_list"
+    - "gnn.convs.*.nn.linears"
+    - "gnn.convs.*.nn.norms"
+personalization:
+  local_param:
+    - "gnn.convs.*.eps"
+    - "gnn.convs.*.nn.norms.*.running_mean"
+    - "gnn.convs.*.nn.norms.*.running_var"
+    - "gnn.convs.*.nn.norms.*.num_batches_tracked"
+    - "linear"
+    - "clf"
 data:
   root: data/
   type: graph_multi_domain_mol
   pre_transform: ['Constant', {'value':1.0, 'cat':False}]
+  transform:
+    - [ "AddEdgeAttr", { } ]
+    - [ "Constant",  { "value": 1.0, "cat": False } ]
 dataloader:
   type: pyg
 model:
@@ -26,7 +46,7 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 30
+  local_update_steps: 16
   optimizer:
     lr: 0.5
     weight_decay: 0.0005

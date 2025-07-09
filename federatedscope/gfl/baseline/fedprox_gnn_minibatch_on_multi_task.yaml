@@ -1,19 +1,26 @@
 use_gpu: True
 device: 0
+early_stop:
+  improve_indicator_mode: mean
+  patience: 10
 federate:
   mode: 'standalone'
   make_global_eval: False
-  total_round_num: 100
-  share_local_model: True
+  total_round_num: 50
+  share_local_model: False
   data_weighted_aggr: True
+fedprox:
+  use: True
+  mu: 0.1
 data:
   root: data/
   type: graph_multi_domain_mol
   pre_transform: ["Constant", {"value": 1.0,  "cat": False}]
   transform:
-    - [ "AddEdgeAttr", { } ]
     - [ "PadFeatures", { "target_dim": 37 } ]
     - [ "Constant",  { "value": 1.0, "cat": False } ]
+personalization:
+  local_param: ['clf']
 dataloader:
   type: pyg
 model:
@@ -23,9 +30,9 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 2
+  local_update_steps: 1
   optimizer:
-    lr: 0.05
+    lr: 0.5
     weight_decay: 0.0005
     type: SGD
 criterion:
@@ -33,5 +40,4 @@ criterion:
 trainer:
   type: graphminibatch_trainer
 eval:
-  freq: 5
   metrics: ['acc', 'correct']

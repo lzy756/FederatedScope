@@ -20,3 +20,15 @@ class PadFeatures(BaseTransform):
         elif C > self.target_dim:
             data.x = x[:, :self.target_dim]
         return data
+
+class AddEdgeAttr(BaseTransform):
+    """
+    给每个 Data 对象添加 edge_attr，如果它不存在的话。
+    生成 shape=(num_edges, 0) 的空 tensor 占位。
+    """
+    def __call__(self, data):
+        # PyG Data 可能用 _store 存储属性
+        if not hasattr(data, 'edge_attr'):
+            num_e = data.edge_index.size(1)
+            data.edge_attr = torch.zeros((num_e, 0), dtype=torch.float)
+        return data
