@@ -236,7 +236,7 @@ def get_generator(dataset_name):
         The generator; Type: object
 
     '''
-    if dataset_name == 'femnist':
+    if dataset_name == 'FashionMNIST@torchvision':
         from federatedscope.attack.models.gan_based_model import \
             GeneratorFemnist
         return GeneratorFemnist

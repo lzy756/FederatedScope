@@ -14,13 +14,17 @@ class FedGS_Splitter(BaseSplitter):
     def __init__(self,
                  client_num,
                  alpha=0.5,
-                 distance_threshold=2.0,
+                 distance_threshold=0.5,  # 距离阈值 ζ，由于使用归一化向量，默认值设为0.5
                  min_groups=2,
-                 max_groups=10):
+                 max_groups=10,
+                 balance_weight=2.0,  # 大小均衡的权重，越大越重视均衡
+                 balance_tolerance=0.2):  # 大小均衡的容忍度，允许的偏差比例
         self.alpha = alpha
-        self.distance_threshold = distance_threshold  # 距离阈值 ζ，默认值调大
+        self.distance_threshold = distance_threshold
         self.min_groups = min_groups  # 最小社区数量 κ
         self.max_groups = max_groups  # 最大社区数量
+        self.balance_weight = balance_weight  # 大小均衡权重
+        self.balance_tolerance = balance_tolerance  # 大小均衡容忍度
         self.data_info = [
         ]  # 2D array storing training data distribution info for each client
         self.test_data_info = []  # Store test set data distribution
@@ -247,51 +251,98 @@ class FedGS_Splitter(BaseSplitter):
         Args:
             client_distributions: List of client data distributions
         """
-        # 计算客户端之间的欧氏距离矩阵
-        n_clients = len(client_distributions)
+        # 归一化客户端分布向量
+        normalized_distributions = []
+        for dist in client_distributions:
+            total = np.sum(dist)
+            if total > 0:
+                normalized_dist = dist / total
+            else:
+                normalized_dist = dist
+            normalized_distributions.append(normalized_dist)
+        normalized_distributions = np.array(normalized_distributions)
+
+        # 计算归一化后的客户端之间的欧氏距离矩阵
+        n_clients = len(normalized_distributions)
         distance_matrix = np.zeros((n_clients, n_clients))
         for i in range(n_clients):
             for j in range(i + 1, n_clients):
-                dist = np.linalg.norm(client_distributions[i] -
-                                      client_distributions[j])
+                dist = np.linalg.norm(normalized_distributions[i] - normalized_distributions[j])
                 distance_matrix[i][j] = dist
                 distance_matrix[j][i] = dist
 
-        # 二分查找合适的阈值，使得社区数量在[min_groups, max_groups]范围内
-        left, right = 0, np.max(distance_matrix)
-        best_threshold = self.distance_threshold
+        # 改进的阈值搜索策略，同时优化社区数量和大小均衡性
+        def calculate_balance_score(cluster_labels, n_clients):
+            """计算聚类结果的综合评分，考虑簇数量和大小均衡性"""
+            num_clusters = len(np.unique(cluster_labels))
+
+            # 如果簇数量不在合理范围内，返回很大的惩罚分数
+            if num_clusters < self.min_groups or num_clusters > self.max_groups:
+                return float('inf')
+
+            # 计算每个簇的大小
+            cluster_sizes = []
+            for label in np.unique(cluster_labels):
+                cluster_size = np.sum(cluster_labels == label)
+                cluster_sizes.append(cluster_size)
+
+            # 计算目标大小和大小均衡性指标
+            target_size = n_clients / num_clusters
+            size_variance = np.var(cluster_sizes)  # 大小方差，越小越均衡
+
+            # 综合评分：簇数量偏离度 + 大小不均衡惩罚
+            ideal_num_clusters = (self.min_groups + self.max_groups) / 2
+            cluster_num_penalty = abs(num_clusters - ideal_num_clusters)
+            balance_penalty = size_variance / (target_size ** 2)  # 归一化方差
+
+            # 综合评分：使用可配置的权重
+            total_score = cluster_num_penalty + self.balance_weight * balance_penalty
+            return total_score, num_clusters, size_variance
+
+        # 使用网格搜索而不是二分查找，以更好地探索参数空间
+        best_threshold = min(self.distance_threshold, 1.0)
         best_labels = None
+        best_score = float('inf')
         best_num_clusters = n_clients
 
-        while left < right:
-            mid = (left + right) / 2
-            clustering = AgglomerativeClustering(n_clusters=None,
-                                                 distance_threshold=mid,
-                                                 metric='precomputed',
-                                                 linkage='complete')
-            cluster_labels = clustering.fit_predict(distance_matrix)
-            num_clusters = len(np.unique(cluster_labels))
-            if self.min_groups <= num_clusters <= self.max_groups:
-                if abs(num_clusters - (self.min_groups + self.max_groups) / 2) < \
-                   abs(best_num_clusters - (self.min_groups + self.max_groups) / 2):
-                    best_threshold = mid
+        # 创建阈值候选列表
+        threshold_candidates = np.linspace(0.01, 1.0, 50)  # 50个候选阈值
+
+        logger.info("Searching for optimal distance threshold with balance consideration...")
+
+        for threshold in threshold_candidates:
+            try:
+                clustering = AgglomerativeClustering(n_clusters=None,
+                                                     distance_threshold=threshold,
+                                                     metric='precomputed',
+                                                     linkage='complete')
+                cluster_labels = clustering.fit_predict(distance_matrix)
+
+                # 计算当前聚类结果的综合评分
+                current_score, num_clusters, size_variance = calculate_balance_score(cluster_labels, n_clients)
+
+                # 如果当前结果更好，更新最佳结果
+                if current_score < best_score:
+                    best_score = current_score
+                    best_threshold = threshold
                     best_labels = cluster_labels
                     best_num_clusters = num_clusters
-            if num_clusters > self.max_groups:
-                left = mid + 1e-6
-            else:
-                right = mid - 1e-6
-            if right - left < 1e-6:
-                break
+
+                    logger.debug(f"New best: threshold={threshold:.4f}, clusters={num_clusters}, "
+                               f"score={current_score:.4f}, variance={size_variance:.2f}")
+
+            except Exception as e:
+                logger.debug(f"Failed at threshold {threshold:.4f}: {e}")
+                continue
         if best_labels is None:
-            clustering = AgglomerativeClustering(n_clusters=max(
-                min(n_clients, self.max_groups), self.min_groups),
+            # 如果没找到合适的阈值，强制聚成指定数量的簇
+            target_clusters = max(min(n_clients, self.max_groups), self.min_groups)
+            clustering = AgglomerativeClustering(n_clusters=target_clusters,
                                                  metric='precomputed',
                                                  linkage='complete')
             best_labels = clustering.fit_predict(distance_matrix)
-            best_num_clusters = len(np.unique(best_labels))
             logger.warning(
-                f"Could not find suitable threshold, forcing {best_num_clusters} communities"
+                f"Could not find suitable threshold, forcing {target_clusters} communities"
             )
         # 构建对等社区
         unique_labels = np.unique(best_labels)
@@ -299,40 +350,68 @@ class FedGS_Splitter(BaseSplitter):
         for label in unique_labels:
             community = np.where(best_labels == label)[0]
             self.peer_communities.append(community)
-        # ========== 组内人数均衡后处理 ==========
-        target_size = int(np.ceil(n_clients / len(self.peer_communities)))
-        min_size = target_size - 1
-        max_size = target_size + 1
+
+        # ========== 轻量化的组内人数均衡后处理 ==========
+        # 由于层次聚类已经考虑了大小均衡，这里只做必要的微调
+        target_size = n_clients / len(self.peer_communities)
+        tolerance = max(1, int(target_size * self.balance_tolerance))  # 使用可配置的容忍度
+        min_size = int(target_size - tolerance)
+        max_size = int(target_size + tolerance)
+
         group_sizes = [len(pc) for pc in self.peer_communities]
-        while True:
+        max_iterations = 10  # 限制迭代次数，避免过度调整
+        iteration = 0
+
+        logger.info(f"Initial group sizes: {group_sizes}")
+        logger.info(f"Target size: {target_size:.1f}, allowed range: [{min_size}, {max_size}]")
+
+        while iteration < max_iterations:
             changed = False
             max_idx = np.argmax(group_sizes)
             min_idx = np.argmin(group_sizes)
-            if group_sizes[max_idx] > max_size and group_sizes[
-                    min_idx] < min_size:
+
+            # 只有在差异较大时才进行调整
+            if group_sizes[max_idx] > max_size and group_sizes[min_idx] < min_size:
                 big_group = self.peer_communities[max_idx]
-                # 计算大组内每个客户端到组内其他客户端的平均距离
-                avg_dists = []
-                for i in big_group:
-                    d = np.mean(
-                        [distance_matrix[i][j] for j in big_group if j != i])
-                    avg_dists.append(d)
-                move_idx = np.argmax(avg_dists)
-                client_to_move = big_group[move_idx]
-                # 从大组移除，加入小组
-                self.peer_communities[max_idx] = np.delete(big_group, move_idx)
-                self.peer_communities[min_idx] = np.append(
-                    self.peer_communities[min_idx], client_to_move)
-                group_sizes[max_idx] -= 1
-                group_sizes[min_idx] += 1
-                changed = True
+                small_group = self.peer_communities[min_idx]
+
+                # 找到大组中与小组最相似的客户端进行移动
+                best_move_idx = -1
+                best_move_score = float('inf')
+
+                for i, client_in_big in enumerate(big_group):
+                    # 计算该客户端与小组的平均距离
+                    avg_dist_to_small = np.mean([distance_matrix[client_in_big][j] for j in small_group]) if len(small_group) > 0 else 0
+                    # 计算该客户端与大组其他成员的平均距离
+                    avg_dist_to_big = np.mean([distance_matrix[client_in_big][j] for j in big_group if j != client_in_big])
+
+                    # 移动评分：更倾向于移动与小组相似、与大组不太相似的客户端
+                    move_score = avg_dist_to_small - avg_dist_to_big
+                    if move_score < best_move_score:
+                        best_move_score = move_score
+                        best_move_idx = i
+
+                if best_move_idx >= 0:
+                    client_to_move = big_group[best_move_idx]
+                    # 从大组移除，加入小组
+                    self.peer_communities[max_idx] = np.delete(big_group, best_move_idx)
+                    self.peer_communities[min_idx] = np.append(small_group, client_to_move)
+                    group_sizes[max_idx] -= 1
+                    group_sizes[min_idx] += 1
+                    changed = True
+                    logger.info(f"Moved client {client_to_move + 1} from group {max_idx + 1} to group {min_idx + 1}")
+
             if not changed:
                 break
-        # ========== 组内人数均衡后处理结束 ==========
+            iteration += 1
+
+        final_group_sizes = [len(pc) for pc in self.peer_communities]
+        logger.info(f"Final group sizes after {iteration} iterations: {final_group_sizes}")
+        # ========== 轻量化的组内人数均衡后处理结束 ==========
         # 计算并保存每个社区的平均分布
         community_distributions = []
         for community in self.peer_communities:
-            community_dist = np.zeros_like(client_distributions[0])
+            community_dist = np.zeros_like(normalized_distributions[0])
             total_samples = 0
             for client_idx in community:
                 client_dist = self.data_info[client_idx]['distribution']
@@ -343,10 +422,19 @@ class FedGS_Splitter(BaseSplitter):
                 community_dist = community_dist / total_samples
             community_distributions.append(community_dist)
         self.save_peer_communities()
-        logger.info("\n========== Peer Communities Summary ==========")
+        logger.info("\n========== Peer Communities Summary (Improved with Balance-Aware Clustering) ==========")
         logger.info(
             f"Number of Peer Communities (PCs): {len(self.peer_communities)}")
         logger.info(f"Distance threshold used: {best_threshold:.4f}")
+        logger.info(f"Balance score achieved: {best_score:.4f}")
+
+        # 计算大小均衡性统计
+        group_sizes = [len(pc) for pc in self.peer_communities]
+        size_mean = np.mean(group_sizes)
+        size_std = np.std(group_sizes)
+        logger.info(f"Group sizes: {group_sizes}")
+        logger.info(f"Size statistics - Mean: {size_mean:.2f}, Std: {size_std:.2f}")
+
         for idx, (pc, pc_dist) in enumerate(
                 zip(self.peer_communities, community_distributions)):
             logger.info(f"\nPeer Community {idx + 1}:")

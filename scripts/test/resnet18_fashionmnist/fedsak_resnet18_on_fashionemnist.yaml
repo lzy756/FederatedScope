@@ -1,0 +1,164 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  mode: standalone
+  total_round_num: 60
+  client_num: 100
+  method: fedsak
+aggregator:
+  lambda_: 2
+  lr_shared: 0.05
+  filter_keys:                 
+  - layer1.0.conv1.weight
+  - layer1.0.bn1.weight
+  - layer1.0.bn1.bias
+  - layer1.0.conv2.weight
+  - layer1.0.bn2.weight
+  - layer1.0.bn2.bias
+  - layer1.1.conv1.weight
+  - layer1.1.bn1.weight
+  - layer1.1.bn1.bias
+  - layer1.1.conv2.weight
+  - layer1.1.bn2.weight
+  - layer1.1.bn2.bias
+  - layer2.0.conv1.weight
+  - layer2.0.bn1.weight
+  - layer2.0.bn1.bias
+  - layer2.0.conv2.weight
+  - layer2.0.bn2.weight
+  - layer2.0.bn2.bias
+  - layer2.0.shortcut.0.weight
+  - layer2.0.shortcut.1.weight
+  - layer2.0.shortcut.1.bias
+  - layer2.1.conv1.weight
+  - layer2.1.bn1.weight
+  - layer2.1.bn1.bias
+  - layer2.1.conv2.weight
+  - layer2.1.bn2.weight
+  - layer2.1.bn2.bias
+  - layer3.0.conv1.weight
+  - layer3.0.bn1.weight
+  - layer3.0.bn1.bias
+  - layer3.0.conv2.weight
+  - layer3.0.bn2.weight
+  - layer3.0.bn2.bias
+  - layer3.0.shortcut.0.weight
+  - layer3.0.shortcut.1.weight
+  - layer3.0.shortcut.1.bias
+  - layer3.1.conv1.weight
+  - layer3.1.bn1.weight
+  - layer3.1.bn1.bias
+  - layer3.1.conv2.weight
+  - layer3.1.bn2.weight
+  - layer3.1.bn2.bias
+  - layer4.0.conv1.weight
+  - layer4.0.bn1.weight
+  - layer4.0.bn1.bias
+  - layer4.0.conv2.weight
+  - layer4.0.bn2.weight
+  - layer4.0.bn2.bias
+  - layer4.0.shortcut.0.weight
+  - layer4.0.shortcut.1.weight
+  - layer4.0.shortcut.1.bias
+  - layer4.1.conv1.weight
+  - layer4.1.bn1.weight
+  - layer4.1.bn1.bias
+  - layer4.1.conv2.weight
+  - layer4.1.bn2.weight
+  - layer4.1.bn2.bias
+  - linear.weight
+  - linear.bias
+fedsak:               
+  share_patterns:
+  - layer1.0.conv1.weight
+  - layer1.0.bn1.weight
+  - layer1.0.bn1.bias
+  - layer1.0.conv2.weight
+  - layer1.0.bn2.weight
+  - layer1.0.bn2.bias
+  - layer1.1.conv1.weight
+  - layer1.1.bn1.weight
+  - layer1.1.bn1.bias
+  - layer1.1.conv2.weight
+  - layer1.1.bn2.weight
+  - layer1.1.bn2.bias
+  - layer2.0.conv1.weight
+  - layer2.0.bn1.weight
+  - layer2.0.bn1.bias
+  - layer2.0.conv2.weight
+  - layer2.0.bn2.weight
+  - layer2.0.bn2.bias
+  - layer2.0.shortcut.0.weight
+  - layer2.0.shortcut.1.weight
+  - layer2.0.shortcut.1.bias
+  - layer2.1.conv1.weight
+  - layer2.1.bn1.weight
+  - layer2.1.bn1.bias
+  - layer2.1.conv2.weight
+  - layer2.1.bn2.weight
+  - layer2.1.bn2.bias
+  - layer3.0.conv1.weight
+  - layer3.0.bn1.weight
+  - layer3.0.bn1.bias
+  - layer3.0.conv2.weight
+  - layer3.0.bn2.weight
+  - layer3.0.bn2.bias
+  - layer3.0.shortcut.0.weight
+  - layer3.0.shortcut.1.weight
+  - layer3.0.shortcut.1.bias
+  - layer3.1.conv1.weight
+  - layer3.1.bn1.weight
+  - layer3.1.bn1.bias
+  - layer3.1.conv2.weight
+  - layer3.1.bn2.weight
+  - layer3.1.bn2.bias
+  - layer4.0.conv1.weight
+  - layer4.0.bn1.weight
+  - layer4.0.bn1.bias
+  - layer4.0.conv2.weight
+  - layer4.0.bn2.weight
+  - layer4.0.bn2.bias
+  - layer4.0.shortcut.0.weight
+  - layer4.0.shortcut.1.weight
+  - layer4.0.shortcut.1.bias
+  - layer4.1.conv1.weight
+  - layer4.1.bn1.weight
+  - layer4.1.bn1.bias
+  - layer4.1.conv2.weight
+  - layer4.1.bn2.weight
+  - layer4.1.bn2.bias
+  - linear.weight
+  - linear.bias
+data:
+  type: FashionMNIST@torchvision
+  splits: [0.6,0.2,0.2]
+  subsample: 1.0
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.9637], 'std': [0.1592]}]]
+  splitter: lda
+  splitter_args: [{
+    'alpha': 0.1
+  }]
+dataloader:
+  batch_size: 10
+model:
+  type: resnet18
+  in_channels: 1
+  out_channels: 10
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: fedsak
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']

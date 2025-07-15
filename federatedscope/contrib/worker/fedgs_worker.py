@@ -5,7 +5,15 @@ import torch
 import random
 import os
 import json
+import math
 from pulp import *  # For linear programming solver
+try:
+    import gurobipy as gp
+    from gurobipy import GRB
+    GUROBI_AVAILABLE = True
+except ImportError:
+    GUROBI_AVAILABLE = False
+    print("Gurobi not available, will use PuLP as fallback")
 
 from federatedscope.core.message import Message
 from federatedscope.core.workers.server import Server
@@ -62,7 +70,15 @@ class FedGSServer(Server):
         # CC related
         self.ccs = [[] for _ in range(self.num_ccs)]
         self.client_ccs = {}
-        self.h_vector = None  # CC template vector
+        self.h_vector = None  # CC template vector (solved once at initialization)
+
+        # Template solving parameters
+        self.L = config.fedgs.get("L", 5)  # Additional clients to select per round
+        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
+        self.A_matrix = None  # Feature matrix A
+        self.M_vector = None  # Target vector M
+        self.B_vector = None  # Upper bounds for each cluster
+        self.template_solved = False  # Flag to indicate if template is solved
 
         # Group related
         self.groups = [[] for _ in range(self.num_groups)
@@ -102,10 +118,11 @@ class FedGSServer(Server):
         if not self._calculate_features():
             return False
 
-        # Build CC
-        if not self._form_client_communities():
+        # Solve template once at initialization
+        if not self._solve_template_once():
             logger.warning(
-                "CC construction failed, will use fallback strategy")
+                "Template solving failed, will use fallback strategy")
+            return False
 
         return True
 
@@ -203,8 +220,7 @@ class FedGSServer(Server):
                 logger.info(
                     f"Loaded {len(self.peer_communities)} Peer Communities")
 
-                # Build CC
-                self._form_client_communities()
+                # Template will be solved in _solve_template_once()
                 return True
         except Exception as e:
             logger.error(f"Error loading PC information: {str(e)}")
@@ -304,8 +320,7 @@ class FedGSServer(Server):
                             f"Community #{group_id + 1}: {len(clients)} clients - {clients}"
                         )
 
-                    # Build CCs
-                    self._form_client_communities()
+                    # Template will be solved in _solve_template_once()
 
                     return True
             except Exception as e:
@@ -342,268 +357,10 @@ class FedGSServer(Server):
         for label, percentage in sorted(self.global_data_dist.items()):
             logger.info(f"Class {label}: {percentage*100:.2f}%")
 
-    def _solve_cc_composition(self):
-        """Solve CC construction linear programming problem with sample size consideration"""
-        if self.pc_features is None or self.target_distribution is None:
-            logger.error("Missing required feature data")
-            return None
 
-        K = len(self.peer_communities)  # Number of peer communities
-        B = np.array([len(pc) for pc in self.peer_communities])  # PC sizes
 
-        logger.info(f"Starting to solve linear programming problem:")
-        logger.info(f"Number of peer communities K: {K}")
-        logger.info(f"PC sizes B: {B}")
 
-        try:
-            # 1. 随机预采样每个PC中的客户端
-            L_rnd = 1  # 每个PC随机预采样的客户端数量
-            random_selected = []
-            remaining_clients = []
 
-            # 记录每个客户端的样本量
-            client_samples = {}
-            for k, pc in enumerate(self.peer_communities):
-                for client_id in pc:
-                    if str(client_id) in self.client_data_dist:
-                        # 计算该客户端的总样本量
-                        client_samples[client_id] = sum(
-                            self.client_data_dist[str(client_id)].values())
-                    else:
-                        # 如果找不到分布信息，使用默认值1
-                        client_samples[client_id] = 1
-
-            # 记录有效的PC索引
-            valid_pc_indices = []
-            for k, pc in enumerate(self.peer_communities):
-                if len(pc) > L_rnd:
-                    selected = random.sample(list(pc), L_rnd)
-                    random_selected.extend(selected)
-                    remaining = [c for c in pc if c not in selected]
-                    remaining_clients.append(remaining)
-                    if remaining:  # 只记录非空的PC
-                        valid_pc_indices.append(k)
-                else:
-                    random_selected.extend(pc)
-                    remaining_clients.append([])
-
-            logger.info(
-                f"Randomly pre-selected {len(random_selected)} clients")
-            logger.info(
-                f"Number of valid PCs after pre-selection: {len(valid_pc_indices)}"
-            )
-
-            if not valid_pc_indices:
-                logger.warning("No valid PCs remaining after pre-selection")
-                return None
-
-            # 2. 计算随机预采样客户端的特征和样本量
-            random_features = np.zeros(self.num_classes)
-            random_samples = 0
-            for client_id in random_selected:
-                client_dist = self._get_distribution([client_id])
-                client_feat = np.array([
-                    client_dist.get(str(i), 0) for i in range(self.num_classes)
-                ])
-                random_features += client_feat
-                random_samples += client_samples[client_id]
-
-            # 3. 计算剩余客户端的特征矩阵和样本量
-            remaining_features = []
-            remaining_samples = []
-
-            # 只处理非空的PC
-            for k in valid_pc_indices:
-                pc = remaining_clients[k]
-                if pc:  # Double check
-                    pc_dist = self._get_distribution(pc)
-                    pc_feat = [
-                        pc_dist.get(str(i), 0) for i in range(self.num_classes)
-                    ]
-                    remaining_features.append(pc_feat)
-                    remaining_samples.append(sum(client_samples[c]
-                                                 for c in pc))
-
-            if not remaining_features:
-                logger.warning("No remaining features to process")
-                return None
-
-            remaining_features = np.array(remaining_features)
-            remaining_samples = np.array(remaining_samples)
-
-            # 4. 计算目标分布
-            target = self.target_distribution - (
-                random_features /
-                np.sum(random_features) if np.sum(random_features) > 0 else 0)
-            target = np.maximum(target, 0)
-            if np.sum(target) > 0:
-                target = target / np.sum(target)
-
-            # 5. Calculate binary decomposition for each valid PC
-            R = len(valid_pc_indices)  # 使用有效PC的数量
-
-            # Build new feature matrix Q and sample weights
-            Q = np.zeros((R, self.num_classes))
-            sample_weights = np.zeros(R)
-            e_coefficients = []
-
-            for idx, k in enumerate(valid_pc_indices):
-                Q[idx] = remaining_features[idx]
-                sample_weights[idx] = remaining_samples[idx]
-                e_coefficients.append((k, 1))  # 使用原始PC索引
-
-            # 6. Build linear programming problem
-            prob = LpProblem("CC_Construction", LpMinimize)
-
-            # Decision variables
-            x = [LpVariable(f"x_{i}", 0, 1, cat='Binary') for i in range(R)]
-            y = {}
-            for i in range(R):
-                for j in range(R):
-                    y[i, j] = LpVariable(f"y_{i}_{j}", 0, 1, cat='Binary')
-            z = [LpVariable(f"z_{k}", 0, 1, cat='Binary') for k in range(K)]
-
-            # 计算样本量权重
-            total_samples = np.sum(sample_weights)
-            normalized_weights = sample_weights / total_samples if total_samples > 0 else np.ones(
-                R) / R
-
-            # Objective function with sample weights
-            Q_Qt = Q @ Q.T
-            P_tar_Qt = target @ Q.T
-            epsilon = 0.01
-
-            objective = (lpSum(normalized_weights[i] * Q_Qt[i, j] * y[i, j]
-                               for i in range(R) for j in range(R)) -
-                         2 * lpSum(normalized_weights[i] * P_tar_Qt[i] * x[i]
-                                   for i in range(R)) -
-                         epsilon * lpSum(z[k] for k in range(K)))
-            prob += objective
-
-            # Linearization constraints
-            for i in range(R):
-                for j in range(R):
-                    prob += y[i, j] <= x[i]
-                    prob += y[i, j] <= x[j]
-                    prob += y[i, j] >= x[i] + x[j] - 1
-
-            # 样本量约束
-            min_samples = total_samples * 0.2  # 至少选择20%的样本
-            max_samples = total_samples * 0.5  # 最多选择50%的样本
-            prob += lpSum(sample_weights[i] * x[i]
-                          for i in range(R)) >= min_samples
-            prob += lpSum(sample_weights[i] * x[i]
-                          for i in range(R)) <= max_samples
-
-            # 每个PC的选择约束
-            max_per_pc = 2
-            for k in range(K):
-                if k in valid_pc_indices:
-                    idx = valid_pc_indices.index(k)
-                    prob += x[idx] <= max_per_pc
-                    prob += x[idx] >= z[k]
-
-            # Solve
-            prob.solve()
-
-            if LpStatus[prob.status] == 'Optimal':
-                h = np.zeros(K)
-                for i in range(R):
-                    k = e_coefficients[i][0]  # 获取原始PC索引
-                    h[k] = value(x[i])
-
-                # 加入预采样的客户端
-                for k in range(K):
-                    h[k] += L_rnd if len(
-                        self.peer_communities[k]) > L_rnd else len(
-                            self.peer_communities[k])
-
-                self.h_vector = h
-                logger.info(f"Linear programming solved successfully:")
-                logger.info(f"Objective value: {value(prob.objective)}")
-                logger.info(f"h vector: {self.h_vector}")
-
-                # 输出选中客户端的样本量信息
-                selected_samples = sum(sample_weights[i] * value(x[i])
-                                       for i in range(R)) + random_samples
-                logger.info(
-                    f"Total selected samples: {selected_samples} ({selected_samples/total_samples*100:.2f}% of total)"
-                )
-
-                return self.h_vector
-            else:
-                logger.error(
-                    f"Linear programming failed: {LpStatus[prob.status]}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error solving linear programming: {str(e)}")
-            return None
-
-    def _form_client_communities(self):
-        """Build CC based on solving results (每个CC都独立采样5个客户端，尽量不重叠)"""
-        # Solve linear programming problem
-        h = self._solve_cc_composition()
-        if h is None:
-            logger.error("Cannot build CC: Linear programming failed")
-            return False
-
-        self.h_vector = h
-        logger.info(f"CC template vector h: {h}")
-
-        # Reset CC信息
-        self.ccs = [[] for _ in range(self.num_ccs)]
-        self.client_ccs = {}
-
-        # 统计每个PC的可用客户端
-        pc_available_clients = [list(pc) for pc in self.peer_communities]
-        # 记录已被选过的客户端，尽量避免重叠
-        used_clients = set()
-
-        for cc_idx in range(self.num_ccs):
-            cc_clients = []
-            for pc_idx, num in enumerate(h):
-                num = int(round(num))
-                if num == 0:
-                    continue
-                # 优先从未被选过的客户端中采样
-                available = [
-                    c for c in pc_available_clients[pc_idx]
-                    if c not in used_clients
-                ]
-                if len(available) < num:
-                    # 不够就允许重叠，从所有PC客户端中采样
-                    available = list(pc_available_clients[pc_idx])
-                if len(available) >= num:
-                    selected = random.sample(available, num)
-                else:
-                    # 兜底：如果PC本身人数都不够num，全部选上
-                    selected = list(available)
-                cc_clients.extend(selected)
-                used_clients.update(selected)
-            self.ccs[cc_idx] = cc_clients
-            for client_id in cc_clients:
-                self.client_ccs[client_id] = cc_idx
-
-        # 记录CC信息
-        self.is_cc_formed = True
-        logger.info(
-            "Client Communities construction completed (each CC independently samples 5 clients):"
-        )
-        for cc_idx, clients in enumerate(self.ccs):
-            cc_dist = self._get_distribution(clients)
-            logger.info(
-                f"CC #{cc_idx + 1}: {len(clients)} clients - {clients}")
-            logger.info(f"CC #{cc_idx + 1} data distribution:")
-            for label, percentage in sorted(cc_dist.items()):
-                logger.info(f"  Class {label}: {percentage*100:.2f}%")
-            # Calculate difference from target distribution
-            cc_dist_array = np.array(
-                [cc_dist.get(str(i), 0) for i in range(self.num_classes)])
-            diff = np.linalg.norm(cc_dist_array - self.target_distribution)
-            logger.info(
-                f"  L2 difference from target distribution: {diff:.4f}")
-        return True
 
     def _register_default_handlers(self):
         """Register message processing functions"""
@@ -737,8 +494,8 @@ class FedGSServer(Server):
             # 适配父类方法的用法
             self.sampler.change_state(self.unseen_clients_id, 'unseen')
 
-        # Generate CCs for this round
-        self.current_ccs = self._generate_ccs_for_round(self.state)
+        # Generate CCs for this round using pre-solved template
+        self.current_ccs = self._generate_ccs_from_template(self.state)
         if not any(self.current_ccs):
             logger.warning(
                 f"Failed to generate CCs for round {self.state}, skipping this round"
@@ -849,74 +606,7 @@ class FedGSServer(Server):
         logger.info(f"Selected clients: {selected_clients}")
         return selected_clients
 
-    def _generate_ccs_for_round(self, round_idx):
-        """Dynamically generate multiple CCs for current round
-        每个CC都独立根据h向量采样5个客户端，允许重叠
-        """
-        # Set random seed based on round index to ensure different but reproducible results
-        np.random.seed(round_idx)
-        random.seed(round_idx)
 
-        # Add small random perturbation to target distribution
-        noise_scale = 0.05  # Scale of random noise
-        perturbed_target = self.target_distribution + np.random.normal(
-            0, noise_scale, size=self.num_classes)
-        perturbed_target = np.clip(perturbed_target, 0.01,
-                                   1.0)  # Ensure positive values
-        perturbed_target = perturbed_target / perturbed_target.sum(
-        )  # Normalize
-
-        # Temporarily replace target distribution
-        original_target = self.target_distribution
-        self.target_distribution = perturbed_target
-
-        # Solve CC composition to get h vector
-        h = self._solve_cc_composition()
-
-        # Restore original target distribution
-        self.target_distribution = original_target
-
-        if h is None:
-            logger.error("Cannot generate CCs: Linear programming failed")
-            return [[] for _ in range(self.num_ccs)]
-
-        logger.info(f"Round {round_idx}: CC template vector h: {h}")
-        logger.info(f"Perturbed target distribution: {perturbed_target}")
-
-        # 每个CC都独立采样5个客户端
-        ccs = [[] for _ in range(self.num_ccs)]
-        pc_available_clients = [list(pc) for pc in self.peer_communities]
-        for cc_idx in range(self.num_ccs):
-            cc_clients = []
-            for pc_idx, num in enumerate(h):
-                num = int(round(num))
-                if num == 0:
-                    continue
-                available = list(pc_available_clients[pc_idx])
-                if len(available) >= num:
-                    selected = random.sample(available, num)
-                else:
-                    selected = list(available)
-                cc_clients.extend(selected)
-            ccs[cc_idx] = cc_clients
-
-        # 日志输出
-        logger.info(
-            f"Generated {self.num_ccs} CCs for round {round_idx} (each CC independently samples 5 clients):"
-        )
-        for cc_idx, cc in enumerate(ccs):
-            logger.info(f"CC #{cc_idx + 1}: {len(cc)} clients - {cc}")
-            if cc:
-                cc_dist = self._get_distribution(cc)
-                logger.info(f"CC #{cc_idx + 1} data distribution:")
-                for label, percentage in sorted(cc_dist.items()):
-                    logger.info(f"  Class {label}: {percentage*100:.2f}%")
-                cc_dist_array = np.array(
-                    [cc_dist.get(str(i), 0) for i in range(self.num_classes)])
-                diff = np.linalg.norm(cc_dist_array - original_target)
-                logger.info(
-                    f"  L2 difference from target distribution: {diff:.4f}")
-        return ccs
 
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters from clients"""
@@ -1127,6 +817,296 @@ class FedGSServer(Server):
                 )
         logger.info(f"Target distribution: {self.target_distribution}")
         return True
+
+    def _solve_template_once(self):
+        """Solve template h vector once at initialization using Binary Split method"""
+        if not self.peer_communities or not hasattr(self, 'num_classes') or self.num_classes is None:
+            logger.error("Missing PC information or number of classes")
+            return False
+
+        if self.template_solved:
+            logger.info("Template already solved, skipping...")
+            return True
+
+        logger.info("Starting template solving using Binary Split method...")
+
+        # Step 1: Build matrix A and vector M
+        if not self._build_template_matrices():
+            return False
+
+        # Step 2: Solve using Binary Split
+        h_solution = self._solve_binary_split()
+        if h_solution is None:
+            logger.error("Binary Split solving failed")
+            return False
+
+        self.h_vector = h_solution
+        self.template_solved = True
+
+        logger.info(f"Template solved successfully: h = {self.h_vector}")
+        return True
+
+    def _build_template_matrices(self):
+        """Build matrix A and vector M for template solving"""
+        try:
+            K = len(self.peer_communities)  # Number of clusters
+            F = self.num_classes  # Number of features (classes)
+
+            # Build matrix A: A[f, k] = n^{C_k} * P^{C_k}[f]
+            # where n^{C_k} is average samples per client in cluster k
+            # and P^{C_k}[f] is the probability of class f in cluster k
+            self.A_matrix = np.zeros((F, K))
+            self.B_vector = np.zeros(K)  # Upper bounds (cluster sizes)
+
+            for k, pc in enumerate(self.peer_communities):
+                if not pc:  # Skip empty clusters
+                    continue
+
+                self.B_vector[k] = len(pc)  # Cluster size as upper bound
+
+                # Calculate cluster distribution
+                pc_raw_dist = self._get_raw_distribution(pc)
+                total_samples = sum(pc_raw_dist.values()) if pc_raw_dist else 1
+
+                # Average samples per client in this cluster
+                n_ck = total_samples / len(pc) if len(pc) > 0 else 0
+
+                # Probability distribution for this cluster
+                for f in range(F):
+                    class_samples = pc_raw_dist.get(str(f), 0)
+                    p_ck_f = class_samples / total_samples if total_samples > 0 else 0
+                    self.A_matrix[f, k] = n_ck * p_ck_f
+
+            # Build vector M: M = n(L+K) * P^{tar}
+            total_clients_selected = self.L + K  # L additional + K (at least one per cluster)
+            self.M_vector = self.n_batch_size * total_clients_selected * self.target_distribution
+
+            logger.info(f"Matrix A shape: {self.A_matrix.shape}")
+            logger.info(f"Vector M shape: {self.M_vector.shape}")
+            logger.info(f"Upper bounds B: {self.B_vector}")
+            logger.info(f"Target total clients: {total_clients_selected}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error building template matrices: {str(e)}")
+            return False
+
+    def _solve_binary_split(self):
+        """Solve the constrained least squares problem using Binary Split method"""
+        try:
+            K = len(self.peer_communities)  # Number of variables
+
+            # Step 1: Binary decomposition
+            G = []  # Number of binary bits for each variable
+            total_binary_vars = 0
+
+            for k in range(K):
+                B_k = int(self.B_vector[k])
+                G_k = math.ceil(math.log2(B_k + 1)) if B_k > 0 else 1
+                G.append(G_k)
+                total_binary_vars += G_k
+
+            logger.info(f"Binary decomposition: G = {G}, total binary vars = {total_binary_vars}")
+
+            # Step 2: Build transformation matrix T
+            T_matrix = self._build_transformation_matrix(G)
+
+            # Step 3: Solve using optimization solver
+            if GUROBI_AVAILABLE:
+                return self._solve_with_gurobi(T_matrix, G)
+            else:
+                return self._solve_with_pulp(T_matrix, G)
+
+        except Exception as e:
+            logger.error(f"Error in Binary Split solving: {str(e)}")
+            return None
+
+    def _build_transformation_matrix(self, G):
+        """Build transformation matrix T for binary split"""
+        K = len(G)
+        total_binary_vars = sum(G)
+        T_matrix = np.zeros((K, total_binary_vars))
+
+        col_idx = 0
+        for i in range(K):
+            for j in range(G[i]):
+                T_matrix[i, col_idx] = 2**j
+                col_idx += 1
+
+        return T_matrix
+
+    def _solve_with_gurobi(self, T_matrix, G):
+        """Solve using Gurobi optimizer"""
+        try:
+            K = len(self.peer_communities)
+            total_binary_vars = sum(G)
+
+            # Create model
+            model = gp.Model("BinarySplit")
+            model.setParam('OutputFlag', 0)  # Suppress output
+
+            # Create binary variables
+            b_vars = model.addVars(total_binary_vars, vtype=GRB.BINARY, name="b")
+
+            # Objective: minimize ||A*T*b - M||_2^2
+            AT = self.A_matrix @ T_matrix  # Shape: (F, total_binary_vars)
+
+            # Quadratic objective
+            obj = gp.QuadExpr()
+            for f in range(self.num_classes):
+                expr = gp.LinExpr()
+                for j in range(total_binary_vars):
+                    expr += AT[f, j] * b_vars[j]
+                expr -= self.M_vector[f]
+                obj += expr * expr
+
+            model.setObjective(obj, GRB.MINIMIZE)
+
+            # Constraint: sum(T*b) = L
+            constraint_expr = gp.LinExpr()
+            for i in range(K):
+                for j in range(total_binary_vars):
+                    constraint_expr += T_matrix[i, j] * b_vars[j]
+            model.addConstr(constraint_expr == self.L, "sum_constraint")
+
+            # Solve
+            model.optimize()
+
+            if model.status == GRB.OPTIMAL:
+                # Extract solution
+                b_solution = np.array([b_vars[j].x for j in range(total_binary_vars)])
+                h_solution = T_matrix @ b_solution
+
+                # Add the mandatory 1 client per cluster
+                h_solution = h_solution + 1
+
+                logger.info(f"Gurobi solved successfully with objective value: {model.objVal}")
+                return h_solution
+            else:
+                logger.error(f"Gurobi optimization failed with status: {model.status}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error in Gurobi solving: {str(e)}")
+            return None
+
+    def _solve_with_pulp(self, T_matrix, G):
+        """Solve using PuLP as fallback (approximation)"""
+        try:
+            K = len(self.peer_communities)
+            total_binary_vars = sum(G)
+
+            logger.info("Using PuLP solver (approximation method)")
+
+            # Create problem
+            prob = LpProblem("BinarySplit_Approx", LpMinimize)
+
+            # Create binary variables
+            b_vars = [LpVariable(f"b_{j}", cat='Binary') for j in range(total_binary_vars)]
+
+            # Objective: minimize ||A*T*b - M||_2^2 (approximated as L1 norm)
+            AT = self.A_matrix @ T_matrix
+
+            # Create auxiliary variables for absolute values
+            aux_vars = [LpVariable(f"aux_{f}", lowBound=0) for f in range(self.num_classes)]
+
+            # Objective: minimize sum of auxiliary variables
+            prob += lpSum(aux_vars)
+
+            # Constraints for auxiliary variables: aux_f >= |AT[f,:]*b - M[f]|
+            for f in range(self.num_classes):
+                expr = lpSum(AT[f, j] * b_vars[j] for j in range(total_binary_vars)) - self.M_vector[f]
+                prob += aux_vars[f] >= expr
+                prob += aux_vars[f] >= -expr
+
+            # Constraint: sum(T*b) = L
+            constraint_expr = lpSum(T_matrix[i, j] * b_vars[j]
+                                  for i in range(K) for j in range(total_binary_vars))
+            prob += constraint_expr == self.L
+
+            # Solve
+            prob.solve()
+
+            if LpStatus[prob.status] == 'Optimal':
+                # Extract solution
+                b_solution = np.array([value(b_vars[j]) for j in range(total_binary_vars)])
+                h_solution = T_matrix @ b_solution
+
+                # Add the mandatory 1 client per cluster
+                h_solution = h_solution + 1
+
+                logger.info(f"PuLP solved successfully with objective value: {value(prob.objective)}")
+                return h_solution
+            else:
+                logger.error(f"PuLP optimization failed with status: {LpStatus[prob.status]}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error in PuLP solving: {str(e)}")
+            return None
+
+    def _generate_ccs_from_template(self, round_idx):
+        """Generate CCs for current round using pre-solved template h vector"""
+        if not self.template_solved or self.h_vector is None:
+            logger.error("Template not solved, cannot generate CCs")
+            return [[] for _ in range(self.num_ccs)]
+
+        # Set random seed for reproducible but different results per round
+        np.random.seed(round_idx + 42)  # Add offset to avoid collision with other random seeds
+        random.seed(round_idx + 42)
+
+        logger.info(f"Round {round_idx}: Generating CCs using template h = {self.h_vector}")
+
+        # Generate multiple CCs based on the template
+        ccs = []
+        for cc_idx in range(self.num_ccs):
+            cc_clients = []
+
+            # For each cluster, select clients according to h_vector
+            for k, pc in enumerate(self.peer_communities):
+                if not pc:  # Skip empty clusters
+                    continue
+
+                num_to_select = int(round(self.h_vector[k]))
+                if num_to_select <= 0:
+                    continue
+
+                # Ensure we don't select more than available
+                num_to_select = min(num_to_select, len(pc))
+
+                # Random selection from this cluster
+                if num_to_select == len(pc):
+                    selected = list(pc)
+                else:
+                    selected = random.sample(list(pc), num_to_select)
+
+                cc_clients.extend(selected)
+
+            ccs.append(cc_clients)
+
+        # Log the results
+        logger.info(f"Generated {len(ccs)} CCs for round {round_idx}:")
+        total_selected = 0
+        for cc_idx, cc in enumerate(ccs):
+            logger.info(f"CC #{cc_idx + 1}: {len(cc)} clients - {cc}")
+            total_selected += len(cc)
+
+            if cc:  # Log distribution if CC is not empty
+                cc_dist = self._get_distribution(cc)
+                logger.info(f"CC #{cc_idx + 1} data distribution:")
+                for label, percentage in sorted(cc_dist.items()):
+                    logger.info(f"  Class {label}: {percentage*100:.2f}%")
+
+                # Calculate L2 difference from target
+                cc_dist_array = np.array([cc_dist.get(str(i), 0) for i in range(self.num_classes)])
+                diff = np.linalg.norm(cc_dist_array - self.target_distribution)
+                logger.info(f"  L2 difference from target: {diff:.4f}")
+
+        logger.info(f"Total clients selected across all CCs: {total_selected}")
+        logger.info(f"Expected total (L + K): {self.L + len(self.peer_communities)}")
+
+        return ccs
 
     def _get_raw_distribution(self, client_ids):
         """Calculate raw sample counts for given client set

@@ -14,7 +14,7 @@ data:
   # splits: [0.8,0.1,0.1]
   # splitter: ut_har_splitter
   splitter: lda
-  splitter_args: [{'alpha': 0.5}]
+  splitter_args: [{'alpha': 0.2}]
 dataloader:
   batch_size: 32
 model:

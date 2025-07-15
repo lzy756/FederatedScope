@@ -17,7 +17,7 @@ data:
   # splits: [0.6,0.2,0.2]
   # subsample: 0.05
   # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
-  splitter_args: [{'alpha': 0.5}]
+  splitter_args: [{'alpha': 0.2}]
 aggregator:
   lambda_: 0.1
   lr_shared: 0.05
