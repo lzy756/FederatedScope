@@ -696,6 +696,17 @@ class FedGSServer(Server):
             # 保存聚合结果作为个性化切片，下一轮使用
             if "model_para_all" in result:
                 self.personalized_slices = result["model_para_all"]
+                # 构建一个临时空字典
+                temp_personalized_slices = {}
+                # 将cluster模型复制到对应客户端
+                for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
+                    cluster_key = f"cluster_{cluster_idx}"
+                    if cluster_key in self.personalized_slices:
+                        for client_id in cluster_clients:
+                            temp_personalized_slices[client_id] = self.personalized_slices[cluster_key]
+                            # 输出调试信息
+                            logger.info(f'Copied model from {cluster_key} to client {client_id}')
+                self.personalized_slices = temp_personalized_slices
             logger.info(f'type of personalized_slices: {type(self.personalized_slices)}')
             logger.info(f'personalized_slices length: {len(self.personalized_slices)}')
             # 输出personalized_slices字典id
