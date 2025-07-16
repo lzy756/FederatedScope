@@ -48,8 +48,7 @@ class FedGSServer(Server):
                          **kwargs)
 
         # FedGS specific parameters
-        self.num_groups = config.fedgs.num_groups  # K: Number of peer communities
-        self.num_ccs = config.fedgs.num_groups  # M: Number of colleague communities
+        self.num_groups = config.fedgs.num_groups  # K: Number of peer communities (clusters)
 
         # FedSAK specific parameters
         self.agg_lmbda = config.aggregator.get("lambda_",
@@ -67,10 +66,9 @@ class FedGSServer(Server):
         self.target_distribution = None  # Target distribution P^tar
         self.num_classes = None  # Number of classes
 
-        # CC related
-        self.ccs = [[] for _ in range(self.num_ccs)]
-        self.client_ccs = {}
-        self.h_vector = None  # CC template vector (solved once at initialization)
+        # Cluster-based selection (removed CC concept)
+        self.selected_clients_per_cluster = {}  # {cluster_idx: [client_list]}
+        self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
         self.L = config.fedgs.get("L", 5)  # Additional clients to select per round
@@ -494,23 +492,23 @@ class FedGSServer(Server):
             # 适配父类方法的用法
             self.sampler.change_state(self.unseen_clients_id, 'unseen')
 
-        # Generate CCs for this round using pre-solved template
-        self.current_ccs = self._generate_ccs_from_template(self.state)
-        if not any(self.current_ccs):
+        # Select clients from each cluster using pre-solved template
+        self.selected_clients_per_cluster = self._select_clients_from_clusters(self.state)
+        if not any(self.selected_clients_per_cluster.values()):
             logger.warning(
-                f"Failed to generate CCs for round {self.state}, skipping this round"
+                f"Failed to select clients for round {self.state}, skipping this round"
             )
             self.state += 1
             if self.state < self._cfg.federate.total_round_num:
                 self.broadcast_model_para(msg_type='model_para')
             return
 
-        # Broadcast model parameters to all clients in all CCs
+        # Broadcast model parameters to all selected clients in all clusters
         sampled_clients = []
-        for cc_idx, cc in enumerate(self.current_ccs):
-            if cc:
-                sampled_clients.extend(cc)
-                logger.info(f'CC #{cc_idx + 1}: {len(cc)} clients - {cc}')
+        for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
+            if cluster_clients:
+                sampled_clients.extend(cluster_clients)
+                logger.info(f'Cluster #{cluster_idx + 1}: {len(cluster_clients)} clients - {cluster_clients}')
 
         logger.info(
             f'Server: Broadcasting model parameters to {len(sampled_clients)} clients...'
@@ -622,37 +620,38 @@ class FedGSServer(Server):
             f'Server: Received model parameters from client {sender} for round {round}'
         )
 
-        # Check if received all responses from all CCs
-        if not hasattr(self, 'current_ccs'):
-            logger.warning("No current CCs found, skipping aggregation")
+        # Check if received all responses from all selected clients
+        if not hasattr(self, 'selected_clients_per_cluster'):
+            logger.warning("No selected clients found, skipping aggregation")
             return True
 
-        # 统计每个CC的每个客户端都收到才聚合
+        # Count expected and received responses from all selected clients
         expected_total = 0
         received_total = 0
-        for cc in self.current_ccs:
-            for client_id in cc:
+        for cluster_clients in self.selected_clients_per_cluster.values():
+            for client_id in cluster_clients:
                 expected_total += 1
                 if client_id in self.msg_buffer['train'][round]:
                     received_total += 1
 
         if received_total < expected_total:
-            # 还没收齐，等待
+            # Still waiting for responses
             return True
 
-        # 收齐后聚合
+        # All responses received, start two-layer aggregation
         logger.info(
-            'Server: All CCs have received sufficient responses, starting aggregation'
+            'Server: All selected clients have responded, starting two-layer aggregation'
         )
 
-        # First step: Intra-CC aggregation
-        cc_models = {}
-        for cc_idx, cc in enumerate(self.current_ccs):
-            if not cc:  # Skip empty CCs
+        # First step: Intra-cluster aggregation using FedAvg
+        cluster_models = {}
+        for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
+            if not cluster_clients:  # Skip empty clusters
                 continue
-            # Prepare model for intra-CC clients
-            cc_feedback = []
-            for client_id in cc:
+
+            # Prepare model parameters for intra-cluster clients
+            cluster_feedback = []
+            for client_id in cluster_clients:
                 if client_id in self.msg_buffer['train'][round]:
                     content = self.msg_buffer['train'][round][client_id]
                     if isinstance(content, tuple) and len(content) == 2:
@@ -665,37 +664,43 @@ class FedGSServer(Server):
                         'sample_size': sample_size,
                         'model_para': model_para
                     }
-                    cc_feedback.append(client_info)
-            if cc_feedback:
+                    cluster_feedback.append(client_info)
+
+            if cluster_feedback:
                 logger.info(
-                    f'Server: Performing intra-CC aggregation for CC {cc_idx} with {len(cc_feedback)} clients'
+                    f'Server: Performing intra-cluster FedAvg aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients'
                 )
-                result = self.aggregator.aggregate_intra_group(cc_feedback)
-                cc_models[cc_idx] = {
+                # Use FedAvg for intra-cluster aggregation
+                result = self.aggregator.aggregate_intra_group(cluster_feedback)
+                cluster_models[cluster_idx] = {
                     'model': result,
-                    'size': sum(client['sample_size']
-                                for client in cc_feedback)
+                    'size': sum(client['sample_size'] for client in cluster_feedback)
                 }
 
-        # Second step: Inter-CC aggregation using FedSAK
-        if cc_models:
+        # Second step: Inter-cluster aggregation using FedSAK
+        if cluster_models:
             logger.info(
-                f'Server: Performing inter-CC aggregation with {len(cc_models)} CCs using FedSAK'
+                f'Server: Performing inter-cluster FedSAK aggregation with {len(cluster_models)} clusters'
             )
-            cc_feedback = []
-            for cc_idx, cc_info in cc_models.items():
-                cc_feedback.append({
-                    'client_id': f'cc_{cc_idx}',
-                    'sample_size': cc_info['size'],
-                    'model_para': cc_info['model']
+            cluster_feedback = []
+            for cluster_idx, cluster_info in cluster_models.items():
+                cluster_feedback.append({
+                    'client_id': f'cluster_{cluster_idx}',
+                    'sample_size': cluster_info['size'],
+                    'model_para': cluster_info['model']
                 })
 
-            # 使用FedSAK聚合方法进行组间聚合
-            result = self.aggregator.aggregate_inter_group(cc_feedback)
+            # Use FedSAK aggregation method for inter-cluster aggregation
+            result = self.aggregator.aggregate_inter_group(cluster_feedback)
 
             # 保存聚合结果作为个性化切片，下一轮使用
             if "model_para_all" in result:
                 self.personalized_slices = result["model_para_all"]
+            logger.info(f'type of personalized_slices: {type(self.personalized_slices)}')
+            logger.info(f'personalized_slices length: {len(self.personalized_slices)}')
+            # 输出personalized_slices字典id
+            logger.info(f'personalized_slices keys: {self.personalized_slices.keys()}')
+            # 现在和cluster数量相同，将相应的cluster的复制到对应选择
 
             # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
             self.prev_sample_client_ids = self.sample_client_ids.copy()
@@ -1046,67 +1051,74 @@ class FedGSServer(Server):
             logger.error(f"Error in PuLP solving: {str(e)}")
             return None
 
-    def _generate_ccs_from_template(self, round_idx):
-        """Generate CCs for current round using pre-solved template h vector"""
+    def _select_clients_from_clusters(self, round_idx):
+        """Select clients from each cluster using pre-solved template h vector"""
         if not self.template_solved or self.h_vector is None:
-            logger.error("Template not solved, cannot generate CCs")
-            return [[] for _ in range(self.num_ccs)]
+            logger.error("Template not solved, cannot select clients")
+            return {}
 
         # Set random seed for reproducible but different results per round
         np.random.seed(round_idx + 42)  # Add offset to avoid collision with other random seeds
         random.seed(round_idx + 42)
 
-        logger.info(f"Round {round_idx}: Generating CCs using template h = {self.h_vector}")
+        logger.info(f"Round {round_idx}: Selecting clients from clusters using template h = {self.h_vector}")
 
-        # Generate multiple CCs based on the template
-        ccs = []
-        for cc_idx in range(self.num_ccs):
-            cc_clients = []
+        # Select clients from each cluster based on the template
+        selected_clients_per_cluster = {}
 
-            # For each cluster, select clients according to h_vector
-            for k, pc in enumerate(self.peer_communities):
-                if not pc:  # Skip empty clusters
-                    continue
+        for k, pc in enumerate(self.peer_communities):
+            if not pc:  # Skip empty clusters
+                selected_clients_per_cluster[k] = []
+                continue
 
-                num_to_select = int(round(self.h_vector[k]))
-                if num_to_select <= 0:
-                    continue
+            num_to_select = int(round(self.h_vector[k]))
+            if num_to_select <= 0:
+                selected_clients_per_cluster[k] = []
+                continue
 
-                # Ensure we don't select more than available
-                num_to_select = min(num_to_select, len(pc))
+            # Ensure we don't select more than available
+            num_to_select = min(num_to_select, len(pc))
 
-                # Random selection from this cluster
-                if num_to_select == len(pc):
-                    selected = list(pc)
-                else:
-                    selected = random.sample(list(pc), num_to_select)
+            # Random selection from this cluster
+            if num_to_select == len(pc):
+                selected = list(pc)
+            else:
+                selected = random.sample(list(pc), num_to_select)
 
-                cc_clients.extend(selected)
-
-            ccs.append(cc_clients)
+            selected_clients_per_cluster[k] = selected
 
         # Log the results
-        logger.info(f"Generated {len(ccs)} CCs for round {round_idx}:")
+        logger.info(f"Selected clients from {len(self.peer_communities)} clusters for round {round_idx}:")
         total_selected = 0
-        for cc_idx, cc in enumerate(ccs):
-            logger.info(f"CC #{cc_idx + 1}: {len(cc)} clients - {cc}")
-            total_selected += len(cc)
+        all_selected_clients = []
 
-            if cc:  # Log distribution if CC is not empty
-                cc_dist = self._get_distribution(cc)
-                logger.info(f"CC #{cc_idx + 1} data distribution:")
-                for label, percentage in sorted(cc_dist.items()):
+        for k, clients in selected_clients_per_cluster.items():
+            logger.info(f"Cluster #{k + 1}: {len(clients)} clients - {clients}")
+            total_selected += len(clients)
+            all_selected_clients.extend(clients)
+
+            if clients:  # Log distribution if cluster has selected clients
+                cluster_dist = self._get_distribution(clients)
+                logger.info(f"Cluster #{k + 1} data distribution:")
+                for label, percentage in sorted(cluster_dist.items()):
                     logger.info(f"  Class {label}: {percentage*100:.2f}%")
 
-                # Calculate L2 difference from target
-                cc_dist_array = np.array([cc_dist.get(str(i), 0) for i in range(self.num_classes)])
-                diff = np.linalg.norm(cc_dist_array - self.target_distribution)
-                logger.info(f"  L2 difference from target: {diff:.4f}")
+        # Calculate overall distribution and L2 difference from target
+        if all_selected_clients:
+            overall_dist = self._get_distribution(all_selected_clients)
+            logger.info(f"Overall selected clients data distribution:")
+            for label, percentage in sorted(overall_dist.items()):
+                logger.info(f"  Class {label}: {percentage*100:.2f}%")
 
-        logger.info(f"Total clients selected across all CCs: {total_selected}")
+            # Calculate L2 difference from target for overall distribution
+            overall_dist_array = np.array([overall_dist.get(str(i), 0) for i in range(self.num_classes)])
+            overall_diff = np.linalg.norm(overall_dist_array - self.target_distribution)
+            logger.info(f"Overall L2 difference from target distribution: {overall_diff:.4f}")
+
+        logger.info(f"Total clients selected across all clusters: {total_selected}")
         logger.info(f"Expected total (L + K): {self.L + len(self.peer_communities)}")
 
-        return ccs
+        return selected_clients_per_cluster
 
     def _get_raw_distribution(self, client_ids):
         """Calculate raw sample counts for given client set

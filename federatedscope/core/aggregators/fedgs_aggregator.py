@@ -2,6 +2,7 @@ import logging
 import copy
 import torch
 import numpy as np
+from scipy.optimize import minimize
 
 from federatedscope.core.aggregators import ClientsAvgAggregator
 from federatedscope.core.auxiliaries.utils import param2tensor
@@ -77,37 +78,170 @@ class FedGSAggregator(ClientsAvgAggregator):
             return {'model': self.aggregate_intra_group(client_feedback)}
 
     def _intra_group_aggregate(self, models):
-        """组内聚合：使用加权平均聚合组内客户端的模型
-        
+        """组内聚合：使用共识最大化聚合组内客户端的模型
+
         Args:
             models: 组内客户端模型列表
-            
+
         Returns:
             聚合后的模型参数
         """
-        # 计算总样本大小
-        total_samples = sum(
-            model['sample_size'] if isinstance(model['sample_size'], int
-                                               ) else int(model['sample_size'])
-            for model in models)
+        if len(models) == 1:
+            # 如果只有一个客户端，直接返回其模型
+            return models[0]['model_para']
+
+        logger.info(f"Performing consensus maximization aggregation with {len(models)} clients")
 
         # 获取第一个模型作为基准
-        avg_model = copy.deepcopy(models[0]['model_para'])
+        aggregated_model = copy.deepcopy(models[0]['model_para'])
 
-        # 重置所有参数为0
-        for key in avg_model:
-            avg_model[key] = torch.zeros_like(avg_model[key])
+        # 对每一层独立进行共识最大化聚合
+        for layer_name in aggregated_model.keys():
+            # 检查所有客户端是否都有这一层
+            if not all(layer_name in model['model_para'] for model in models):
+                logger.warning(f"Layer {layer_name} not found in all client models, using weighted average")
+                # 如果某些客户端没有这一层，回退到加权平均
+                aggregated_model[layer_name] = self._weighted_average_layer(models, layer_name)
+                continue
 
-        # 加权平均所有模型
+            # 提取所有客户端在这一层的参数更新
+            layer_updates = []
+            for model in models:
+                layer_param = model['model_para'][layer_name]
+                layer_updates.append(layer_param)
+
+            # 对这一层执行共识最大化聚合
+            aggregated_layer = self._consensus_maximization_layer(layer_updates)
+            aggregated_model[layer_name] = aggregated_layer
+
+        return aggregated_model
+
+    def _consensus_maximization_layer(self, layer_updates):
+        """对单层参数执行共识最大化聚合
+
+        Args:
+            layer_updates: 所有客户端在该层的参数更新列表
+
+        Returns:
+            聚合后的层参数
+        """
+        N = len(layer_updates)
+        if N == 1:
+            return layer_updates[0]
+
+        # 将参数展平为向量
+        flattened_updates = []
+        original_shape = layer_updates[0].shape
+
+        for update in layer_updates:
+            flattened_updates.append(update.flatten())
+
+        # 计算每个客户端更新的L2范数
+        norms = []
+        normalized_updates = []
+
+        for update in flattened_updates:
+            norm = torch.norm(update, p=2)
+            norms.append(norm)
+            if norm > 1e-8:  # 避免除零
+                normalized_updates.append(update / norm)
+            else:
+                normalized_updates.append(torch.zeros_like(update))
+
+        # 计算平均范数 d̄_u^(l)
+        avg_norm = sum(norms) / N
+
+        # 求解优化问题：argmin_u ||∑_k u_k * d_{u,k}^(l)||_2^2
+        # 使用二次规划求解
+        weights = self._solve_consensus_weights(normalized_updates)
+
+        # 计算最终的聚合更新
+        aggregated_update = torch.zeros_like(flattened_updates[0])
+        for i, (weight, norm_update) in enumerate(zip(weights, normalized_updates)):
+            aggregated_update += weight * norm_update
+
+        # 乘以平均范数并恢复原始形状
+        final_update = avg_norm * aggregated_update
+        return final_update.reshape(original_shape)
+
+    def _solve_consensus_weights(self, normalized_updates):
+        """求解共识权重优化问题
+
+        Args:
+            normalized_updates: 归一化后的更新向量列表
+
+        Returns:
+            优化后的权重向量
+        """
+        N = len(normalized_updates)
+        if N == 1:
+            return [1.0]
+
+        # 将张量转换为numpy数组进行优化
+        updates_np = [update.detach().cpu().numpy() for update in normalized_updates]
+
+        def objective(u):
+            """目标函数：||∑_k u_k * d_{u,k}^(l)||_2^2"""
+            weighted_sum = np.zeros_like(updates_np[0])
+            for i, weight in enumerate(u):
+                weighted_sum += weight * updates_np[i]
+            return np.linalg.norm(weighted_sum) ** 2
+
+        # 初始权重（均匀分布）
+        u0 = np.ones(N) / N
+
+        # 约束条件：权重和为1，且每个权重非负
+        constraints = [
+            {'type': 'eq', 'fun': lambda u: np.sum(u) - 1.0}
+        ]
+        bounds = [(0, 1) for _ in range(N)]
+
+        try:
+            # 使用scipy优化求解
+            result = minimize(objective, u0, method='SLSQP',
+                            bounds=bounds, constraints=constraints,
+                            options={'maxiter': 1000, 'ftol': 1e-9})
+
+            if result.success:
+                weights = result.x.tolist()
+                logger.debug(f"Consensus optimization converged with weights: {weights}")
+            else:
+                logger.warning(f"Consensus optimization failed: {result.message}, using uniform weights")
+                weights = [1.0/N] * N
+
+        except Exception as e:
+            logger.warning(f"Error in consensus optimization: {str(e)}, using uniform weights")
+            weights = [1.0/N] * N
+
+        return weights
+
+    def _weighted_average_layer(self, models, layer_name):
+        """对单层参数执行加权平均（备用方法）
+
+        Args:
+            models: 客户端模型列表
+            layer_name: 层名称
+
+        Returns:
+            加权平均后的层参数
+        """
+        total_samples = sum(
+            model['sample_size'] if isinstance(model['sample_size'], int)
+            else int(model['sample_size']) for model in models
+        )
+
+        weighted_layer = None
         for model in models:
-            weight = (model['sample_size'] if isinstance(
-                model['sample_size'], int) else int(
-                    model['sample_size'])) / total_samples
-            for key in avg_model:
-                if key in model['model_para']:
-                    avg_model[key] += model['model_para'][key] * weight
+            if layer_name in model['model_para']:
+                weight = (model['sample_size'] if isinstance(model['sample_size'], int)
+                         else int(model['sample_size'])) / total_samples
 
-        return avg_model
+                if weighted_layer is None:
+                    weighted_layer = model['model_para'][layer_name] * weight
+                else:
+                    weighted_layer += model['model_para'][layer_name] * weight
+
+        return weighted_layer if weighted_layer is not None else torch.zeros_like(models[0]['model_para'][layer_name])
 
     def _inter_group_aggregate_fedsak(self, group_models):
         """组间聚合：使用FedSAK的trace-norm正则化方法聚合所有组的模型
