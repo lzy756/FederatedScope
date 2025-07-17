@@ -1,43 +1,67 @@
 Peer Community Grouping Information
 ==================================================
 
-Total number of communities: 6
+Total number of communities: 10
 
 Community #1
-Members: [2, 4, 9, 10, 11, 12, 15, 17, 19]
-Community overall distribution: [104, 39, 1092, 101, 44, 120, 60]
-Distribution percentages: ['6.67%', '2.50%', '70.00%', '6.47%', '2.82%', '7.69%', '3.85%']
-Total Samples: 1560
+Members: [2, 10, 16]
+Community overall distribution: [82, 3082, 208, 1, 0, 315, 0, 1535, 20, 0]
+Distribution percentages: ['1.56%', '58.78%', '3.97%', '0.02%', '0.00%', '6.01%', '0.00%', '29.28%', '0.38%', '0.00%']
+Total Samples: 5243
 ------------------------------
 Community #2
-Members: [7, 13, 16, 23]
-Community overall distribution: [10, 88, 23, 33, 764, 3, 20]
-Distribution percentages: ['1.06%', '9.35%', '2.44%', '3.51%', '81.19%', '0.32%', '2.13%']
-Total Samples: 941
+Members: [14, 18, 25]
+Community overall distribution: [5, 224, 1, 43, 126, 492, 35, 1760, 17, 256]
+Distribution percentages: ['0.17%', '7.57%', '0.03%', '1.45%', '4.26%', '16.63%', '1.18%', '59.48%', '0.57%', '8.65%']
+Total Samples: 2959
 ------------------------------
 Community #3
-Members: [6, 22, 25]
-Community overall distribution: [47, 196, 3, 80, 10, 169, 32]
-Distribution percentages: ['8.75%', '36.50%', '0.56%', '14.90%', '1.86%', '31.47%', '5.96%']
-Total Samples: 537
+Members: [4, 7, 11, 21, 23]
+Community overall distribution: [97, 62, 24, 2759, 69, 18, 1320, 146, 158, 8]
+Distribution percentages: ['2.08%', '1.33%', '0.51%', '59.19%', '1.48%', '0.39%', '28.32%', '3.13%', '3.39%', '0.17%']
+Total Samples: 4661
 ------------------------------
 Community #4
-Members: [3, 14, 24]
-Community overall distribution: [308, 8, 38, 8, 122, 5, 1]
-Distribution percentages: ['62.86%', '1.63%', '7.76%', '1.63%', '24.90%', '1.02%', '0.20%']
-Total Samples: 490
+Members: [12, 15]
+Community overall distribution: [2035, 69, 414, 157, 0, 3, 87, 9, 0, 6]
+Distribution percentages: ['73.20%', '2.48%', '14.89%', '5.65%', '0.00%', '0.11%', '3.13%', '0.32%', '0.00%', '0.22%']
+Total Samples: 2780
 ------------------------------
 Community #5
-Members: [5, 8, 20]
-Community overall distribution: [29, 15, 10, 29, 9, 3, 114]
-Distribution percentages: ['13.88%', '7.18%', '4.78%', '13.88%', '4.31%', '1.44%', '54.55%']
-Total Samples: 209
+Members: [5, 22]
+Community overall distribution: [1, 0, 2834, 517, 128, 42, 0, 1, 271, 428]
+Distribution percentages: ['0.02%', '0.00%', '67.12%', '12.25%', '3.03%', '0.99%', '0.00%', '0.02%', '6.42%', '10.14%']
+Total Samples: 4222
 ------------------------------
 Community #6
-Members: [1, 18, 21]
-Community overall distribution: [27, 8, 6, 145, 18, 20, 16]
-Distribution percentages: ['11.25%', '3.33%', '2.50%', '60.42%', '7.50%', '8.33%', '6.67%']
-Total Samples: 240
+Members: [3, 13, 24]
+Community overall distribution: [1, 74, 46, 1, 1012, 31, 121, 78, 131, 2027]
+Distribution percentages: ['0.03%', '2.10%', '1.31%', '0.03%', '28.73%', '0.88%', '3.44%', '2.21%', '3.72%', '57.55%']
+Total Samples: 3522
+------------------------------
+Community #7
+Members: [1]
+Community overall distribution: [0, 28, 0, 135, 33, 2267, 171, 89, 0, 0]
+Distribution percentages: ['0.00%', '1.03%', '0.00%', '4.96%', '1.21%', '83.25%', '6.28%', '3.27%', '0.00%', '0.00%']
+Total Samples: 2723
+------------------------------
+Community #8
+Members: [8, 9]
+Community overall distribution: [0, 12, 7, 0, 2188, 206, 2, 1, 536, 16]
+Distribution percentages: ['0.00%', '0.40%', '0.24%', '0.00%', '73.72%', '6.94%', '0.07%', '0.03%', '18.06%', '0.54%']
+Total Samples: 2968
+------------------------------
+Community #9
+Members: [17, 19, 20]
+Community overall distribution: [183, 8, 0, 6, 84, 1, 1900, 0, 537, 0]
+Distribution percentages: ['6.73%', '0.29%', '0.00%', '0.22%', '3.09%', '0.04%', '69.88%', '0.00%', '19.75%', '0.00%']
+Total Samples: 2719
+------------------------------
+Community #10
+Members: [6]
+Community overall distribution: [1116, 22, 0, 5, 0, 259, 0, 0, 1934, 867]
+Distribution percentages: ['26.55%', '0.52%', '0.00%', '0.12%', '0.00%', '6.16%', '0.00%', '0.00%', '46.01%', '20.63%']
+Total Samples: 4203
 ------------------------------
 
 Raw Data (JSON format):
@@ -45,40 +69,48 @@ Raw Data (JSON format):
   "peer_communities": [
     [
       2,
-      4,
-      9,
       10,
-      11,
-      12,
-      15,
-      17,
-      19
+      16
     ],
     [
-      7,
-      13,
-      16,
-      23
-    ],
-    [
-      6,
-      22,
+      14,
+      18,
       25
     ],
     [
-      3,
-      14,
-      24
+      4,
+      7,
+      11,
+      21,
+      23
+    ],
+    [
+      12,
+      15
     ],
     [
       5,
+      22
+    ],
+    [
+      3,
+      13,
+      24
+    ],
+    [
+      1
+    ],
+    [
       8,
+      9
+    ],
+    [
+      17,
+      19,
       20
     ],
     [
-      1,
-      18,
-      21
+      6
     ]
   ]
 }

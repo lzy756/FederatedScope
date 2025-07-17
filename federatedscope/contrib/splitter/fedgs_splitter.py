@@ -11,60 +11,65 @@ logger = logging.getLogger(__name__)
 
 
 class FedGS_Splitter(BaseSplitter):
-    def __init__(self,
-                 client_num,
-                 alpha=0.5,
-                 distance_threshold=0.5,  # 距离阈值 ζ，由于使用归一化向量，默认值设为0.5
-                 min_groups=2,
-                 max_groups=10,
-                 balance_weight=2.0,  # 大小均衡的权重，越大越重视均衡
-                 balance_tolerance=0.2):  # 大小均衡的容忍度，允许的偏差比例
+    def __init__(
+        self,
+        client_num,
+        alpha=0.5,
+        distance_threshold=0.5,  # 距离阈值 ζ，由于使用归一化向量，默认值设为0.5
+        min_groups=2,
+        max_groups=10,
+        balance_weight=2.0,  # 大小均衡的权重，越大越重视均衡
+        balance_tolerance=0.2,
+    ):  # 大小均衡的容忍度，允许的偏差比例
         self.alpha = alpha
         self.distance_threshold = distance_threshold
         self.min_groups = min_groups  # 最小社区数量 κ
         self.max_groups = max_groups  # 最大社区数量
         self.balance_weight = balance_weight  # 大小均衡权重
         self.balance_tolerance = balance_tolerance  # 大小均衡容忍度
-        self.data_info = [
-        ]  # 2D array storing training data distribution info for each client
+        # 2D array storing training data distribution info for each client
+        self.data_info = []
         self.test_data_info = []  # Store test set data distribution
         self.peer_communities = []  # List of peer communities
-        self.is_initialized = False  # Mark whether training data distribution has been recorded
+        self.is_initialized = (
+            False  # Mark whether training data distribution has been recorded
+        )
         self.call_count = 0  # 记录__call__被调用的次数
         super(FedGS_Splitter, self).__init__(client_num)
 
-    def save_data_info(self, save_path='data_info.txt'):
+    def save_data_info(self, save_path="data_info.txt"):
         """Save client data distribution information to text file
-        
+
         Args:
             save_path: Save path, defaults to 'data_info.txt'
         """
         # Ensure directory exists
         os.makedirs(
-            os.path.dirname(save_path) if os.path.dirname(save_path) else '.',
-            exist_ok=True)
+            os.path.dirname(save_path) if os.path.dirname(save_path) else ".",
+            exist_ok=True,
+        )
 
         # Format data
         formatted_data = []
         for client_idx, dist in enumerate(self.data_info):
             # Convert NumPy array to normal list and ensure numeric values
-            if isinstance(dist, dict) and 'distribution' in dist:
-                dist = dist['distribution']
+            if isinstance(dist, dict) and "distribution" in dist:
+                dist = dist["distribution"]
             dist = np.array(dist, dtype=np.float32)
             client_total = float(np.sum(dist))
-            percentages = [
-                f"{(count/client_total*100):.2f}%" for count in dist
-            ]
+            percentages = [f"{(count/client_total*100):.2f}%" for count in dist]
 
-            formatted_data.append({
-                'client_id': client_idx + 1,
-                'distribution': dist.tolist(),
-                'percentages': percentages,
-                'total_samples': client_total
-            })
+            formatted_data.append(
+                {
+                    "client_id": client_idx + 1,
+                    "distribution": dist.tolist(),
+                    "percentages": percentages,
+                    "total_samples": client_total,
+                }
+            )
 
         # Save as text file
-        with open(save_path, 'w', encoding='utf-8') as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write("Client Data Distribution Information\n")
             f.write("=" * 50 + "\n\n")
             for data in formatted_data:
@@ -76,45 +81,44 @@ class FedGS_Splitter(BaseSplitter):
 
             # Save raw data in JSON format (for program reading)
             f.write("\nRaw Data (JSON format):\n")
-            json_data = {
-                "data_info": [data['distribution'] for data in formatted_data]
-            }
+            json_data = {"data_info": [data["distribution"] for data in formatted_data]}
             f.write(json.dumps(json_data, indent=2))
 
-        logger.info(f'Data distribution information saved to: {save_path}')
+        logger.info(f"Data distribution information saved to: {save_path}")
 
-    def save_test_data_info(self, save_path='test_data_info.txt'):
+    def save_test_data_info(self, save_path="test_data_info.txt"):
         """Save test set data distribution information to text file
-        
+
         Args:
             save_path: Save path, defaults to 'test_data_info.txt'
         """
         # Ensure directory exists
         os.makedirs(
-            os.path.dirname(save_path) if os.path.dirname(save_path) else '.',
-            exist_ok=True)
+            os.path.dirname(save_path) if os.path.dirname(save_path) else ".",
+            exist_ok=True,
+        )
 
         # Format data
         formatted_data = []
         for client_idx, dist in enumerate(self.test_data_info):
             # Convert NumPy array to normal list and ensure numeric values
-            if isinstance(dist, dict) and 'distribution' in dist:
-                dist = dist['distribution']
+            if isinstance(dist, dict) and "distribution" in dist:
+                dist = dist["distribution"]
             dist = np.array(dist, dtype=np.float32)
             client_total = float(np.sum(dist))
-            percentages = [
-                f"{(count/client_total*100):.2f}%" for count in dist
-            ]
+            percentages = [f"{(count/client_total*100):.2f}%" for count in dist]
 
-            formatted_data.append({
-                'client_id': client_idx + 1,
-                'distribution': dist.tolist(),
-                'percentages': percentages,
-                'total_samples': client_total
-            })
+            formatted_data.append(
+                {
+                    "client_id": client_idx + 1,
+                    "distribution": dist.tolist(),
+                    "percentages": percentages,
+                    "total_samples": client_total,
+                }
+            )
 
         # Save as text file
-        with open(save_path, 'w', encoding='utf-8') as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write("Test Set Data Distribution Information\n")
             f.write("=" * 50 + "\n\n")
             for data in formatted_data:
@@ -127,52 +131,50 @@ class FedGS_Splitter(BaseSplitter):
             # Save raw data in JSON format (for program reading)
             f.write("\nRaw Data (JSON format):\n")
             json_data = {
-                "test_data_info": [
-                    data['distribution'] for data in formatted_data
-                ]
+                "test_data_info": [data["distribution"] for data in formatted_data]
             }
             f.write(json.dumps(json_data, indent=2))
 
-        logger.info(
-            f'Test set data distribution information saved to: {save_path}')
+        logger.info(f"Test set data distribution information saved to: {save_path}")
 
-    def save_peer_communities(self, save_path='peer_communities.txt'):
+    def save_peer_communities(self, save_path="peer_communities.txt"):
         """Save peer community grouping information to text file
-        
+
         Args:
             save_path: Save path, defaults to 'peer_communities.txt'
         """
         # Ensure directory exists
         os.makedirs(
-            os.path.dirname(save_path) if os.path.dirname(save_path) else '.',
-            exist_ok=True)
+            os.path.dirname(save_path) if os.path.dirname(save_path) else ".",
+            exist_ok=True,
+        )
 
         # Save as text file
-        with open(save_path, 'w', encoding='utf-8') as f:
+        with open(save_path, "w", encoding="utf-8") as f:
             f.write("Peer Community Grouping Information\n")
             f.write("=" * 50 + "\n\n")
-            f.write(
-                f"Total number of communities: {len(self.peer_communities)}\n\n"
-            )
+            f.write(f"Total number of communities: {len(self.peer_communities)}\n\n")
 
             for idx, community in enumerate(self.peer_communities):
                 # Convert NumPy array to normal list
-                community = community.tolist() if isinstance(
-                    community, np.ndarray) else community
+                community = (
+                    community.tolist()
+                    if isinstance(community, np.ndarray)
+                    else community
+                )
                 # 只在显示时将客户端ID加1
                 display_community = [cid + 1 for cid in community]
                 f.write(f"Community #{idx + 1}\n")
                 f.write(f"Members: {display_community}\n")
 
-                if hasattr(self, 'data_info') and self.data_info:
+                if hasattr(self, "data_info") and self.data_info:
                     # 使用原始的0基索引访问数据
                     community_dist = np.sum(
-                        [self.data_info[i]['distribution'] for i in community],
-                        axis=0)
+                        [self.data_info[i]["distribution"] for i in community], axis=0
+                    )
                     total_samples = np.sum(community_dist)
                     percentages = [
-                        f"{(count/total_samples*100):.2f}%"
-                        for count in community_dist
+                        f"{(count/total_samples*100):.2f}%" for count in community_dist
                     ]
 
                     f.write(
@@ -187,67 +189,70 @@ class FedGS_Splitter(BaseSplitter):
             f.write("\nRaw Data (JSON format):\n")
             # 将JSON数据中的客户端ID也改为1基索引
             json_data = {
-                "peer_communities": [[
-                    cid + 1 for cid in
-                    (comm.tolist() if isinstance(comm, np.ndarray) else comm)
-                ] for comm in self.peer_communities]
+                "peer_communities": [
+                    [
+                        cid + 1
+                        for cid in (
+                            comm.tolist() if isinstance(comm, np.ndarray) else comm
+                        )
+                    ]
+                    for comm in self.peer_communities
+                ]
             }
             f.write(json.dumps(json_data, indent=2))
 
-        logger.info(
-            f'Peer community grouping information saved to: {save_path}')
+        logger.info(f"Peer community grouping information saved to: {save_path}")
 
-    def load_data_info(self, load_path='data_info.txt'):
+    def load_data_info(self, load_path="data_info.txt"):
         """Load client data distribution information from text file
-        
+
         Args:
             load_path: Load path, defaults to 'data_info.txt'
         """
         if os.path.exists(load_path):
-            with open(load_path, 'r', encoding='utf-8') as f:
+            with open(load_path, "r", encoding="utf-8") as f:
                 content = f.read()
                 # Find JSON data section
-                json_start = content.find('\nRaw Data (JSON format):\n') + len(
-                    '\nRaw Data (JSON format):\n')
+                json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                    "\nRaw Data (JSON format):\n"
+                )
                 json_data = json.loads(content[json_start:])
-                self.data_info = json_data['data_info']
-                logger.info(
-                    f'Loaded data distribution information from {load_path}')
+                self.data_info = json_data["data_info"]
+                logger.info(f"Loaded data distribution information from {load_path}")
                 return True
         else:
-            logger.warning(
-                f'Data distribution file {load_path} does not exist')
+            logger.warning(f"Data distribution file {load_path} does not exist")
             return False
 
-    def load_peer_communities(self, load_path='peer_communities.txt'):
+    def load_peer_communities(self, load_path="peer_communities.txt"):
         """Load peer community grouping information from text file
-        
+
         Args:
             load_path: Load path, defaults to 'peer_communities.txt'
         """
         if os.path.exists(load_path):
-            with open(load_path, 'r', encoding='utf-8') as f:
+            with open(load_path, "r", encoding="utf-8") as f:
                 content = f.read()
                 # Find JSON data section
-                json_start = content.find('\nRaw Data (JSON format):\n') + len(
-                    '\nRaw Data (JSON format):\n')
+                json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                    "\nRaw Data (JSON format):\n"
+                )
                 json_data = json.loads(content[json_start:])
                 # 将1基索引转换回0基索引
-                self.peer_communities = [[
-                    cid - 1 for cid in comm
-                ] for comm in json_data['peer_communities']]
+                self.peer_communities = [
+                    [cid - 1 for cid in comm] for comm in json_data["peer_communities"]
+                ]
                 logger.info(
-                    f'Loaded peer community grouping information from {load_path}'
+                    f"Loaded peer community grouping information from {load_path}"
                 )
                 return True
         else:
-            logger.warning(
-                f'Peer community grouping file {load_path} does not exist')
+            logger.warning(f"Peer community grouping file {load_path} does not exist")
             return False
 
     def build_peer_communities(self, client_distributions):
         """Build peer communities (PCs) using distance-based hierarchical clustering
-        
+
         Args:
             client_distributions: List of client data distributions
         """
@@ -267,7 +272,9 @@ class FedGS_Splitter(BaseSplitter):
         distance_matrix = np.zeros((n_clients, n_clients))
         for i in range(n_clients):
             for j in range(i + 1, n_clients):
-                dist = np.linalg.norm(normalized_distributions[i] - normalized_distributions[j])
+                dist = np.linalg.norm(
+                    normalized_distributions[i] - normalized_distributions[j]
+                )
                 distance_matrix[i][j] = dist
                 distance_matrix[j][i] = dist
 
@@ -278,7 +285,7 @@ class FedGS_Splitter(BaseSplitter):
 
             # 如果簇数量不在合理范围内，返回很大的惩罚分数
             if num_clusters < self.min_groups or num_clusters > self.max_groups:
-                return float('inf')
+                return float("inf")
 
             # 计算每个簇的大小
             cluster_sizes = []
@@ -293,7 +300,7 @@ class FedGS_Splitter(BaseSplitter):
             # 综合评分：簇数量偏离度 + 大小不均衡惩罚
             ideal_num_clusters = (self.min_groups + self.max_groups) / 2
             cluster_num_penalty = abs(num_clusters - ideal_num_clusters)
-            balance_penalty = size_variance / (target_size ** 2)  # 归一化方差
+            balance_penalty = size_variance / (target_size**2)  # 归一化方差
 
             # 综合评分：使用可配置的权重
             total_score = cluster_num_penalty + self.balance_weight * balance_penalty
@@ -302,24 +309,30 @@ class FedGS_Splitter(BaseSplitter):
         # 使用网格搜索而不是二分查找，以更好地探索参数空间
         best_threshold = min(self.distance_threshold, 1.0)
         best_labels = None
-        best_score = float('inf')
+        best_score = float("inf")
         best_num_clusters = n_clients
 
         # 创建阈值候选列表
         threshold_candidates = np.linspace(0.01, 1.0, 50)  # 50个候选阈值
 
-        logger.info("Searching for optimal distance threshold with balance consideration...")
+        logger.info(
+            "Searching for optimal distance threshold with balance consideration..."
+        )
 
         for threshold in threshold_candidates:
             try:
-                clustering = AgglomerativeClustering(n_clusters=None,
-                                                     distance_threshold=threshold,
-                                                     metric='precomputed',
-                                                     linkage='complete')
+                clustering = AgglomerativeClustering(
+                    n_clusters=None,
+                    distance_threshold=threshold,
+                    metric="precomputed",
+                    linkage="complete",
+                )
                 cluster_labels = clustering.fit_predict(distance_matrix)
 
                 # 计算当前聚类结果的综合评分
-                current_score, num_clusters, size_variance = calculate_balance_score(cluster_labels, n_clients)
+                current_score, num_clusters, size_variance = calculate_balance_score(
+                    cluster_labels, n_clients
+                )
 
                 # 如果当前结果更好，更新最佳结果
                 if current_score < best_score:
@@ -328,8 +341,10 @@ class FedGS_Splitter(BaseSplitter):
                     best_labels = cluster_labels
                     best_num_clusters = num_clusters
 
-                    logger.debug(f"New best: threshold={threshold:.4f}, clusters={num_clusters}, "
-                               f"score={current_score:.4f}, variance={size_variance:.2f}")
+                    logger.debug(
+                        f"New best: threshold={threshold:.4f}, clusters={num_clusters}, "
+                        f"score={current_score:.4f}, variance={size_variance:.2f}"
+                    )
 
             except Exception as e:
                 logger.debug(f"Failed at threshold {threshold:.4f}: {e}")
@@ -337,9 +352,29 @@ class FedGS_Splitter(BaseSplitter):
         if best_labels is None:
             # 如果没找到合适的阈值，强制聚成指定数量的簇
             target_clusters = max(min(n_clients, self.max_groups), self.min_groups)
-            clustering = AgglomerativeClustering(n_clusters=target_clusters,
-                                                 metric='precomputed',
-                                                 linkage='complete')
+            from sklearn import __version__ as sklearn_version
+
+            def parse_version(version_str):
+                parts = []
+                for part in version_str.split("."):
+                    num_part = "".join(
+                        filter(str.isdigit, part)
+                    )  # 提取数字部分（如 "1.4.0" -> [1,4,0]）
+                    if num_part:
+                        parts.append(int(num_part))
+                return tuple(parts)
+
+            use_metric = parse_version(sklearn_version) >= (1, 4)
+            if not use_metric:
+                clustering = AgglomerativeClustering(
+                    n_clusters=target_clusters,
+                    affinity="precomputed",
+                    linkage="complete",
+                )
+            else:
+                clustering = AgglomerativeClustering(
+                    n_clusters=target_clusters, metric="precomputed", linkage="complete"
+                )
             best_labels = clustering.fit_predict(distance_matrix)
             logger.warning(
                 f"Could not find suitable threshold, forcing {target_clusters} communities"
@@ -354,7 +389,9 @@ class FedGS_Splitter(BaseSplitter):
         # ========== 轻量化的组内人数均衡后处理 ==========
         # 由于层次聚类已经考虑了大小均衡，这里只做必要的微调
         target_size = n_clients / len(self.peer_communities)
-        tolerance = max(1, int(target_size * self.balance_tolerance))  # 使用可配置的容忍度
+        tolerance = max(
+            1, int(target_size * self.balance_tolerance)
+        )  # 使用可配置的容忍度
         min_size = int(target_size - tolerance)
         max_size = int(target_size + tolerance)
 
@@ -363,7 +400,9 @@ class FedGS_Splitter(BaseSplitter):
         iteration = 0
 
         logger.info(f"Initial group sizes: {group_sizes}")
-        logger.info(f"Target size: {target_size:.1f}, allowed range: [{min_size}, {max_size}]")
+        logger.info(
+            f"Target size: {target_size:.1f}, allowed range: [{min_size}, {max_size}]"
+        )
 
         while iteration < max_iterations:
             changed = False
@@ -377,13 +416,25 @@ class FedGS_Splitter(BaseSplitter):
 
                 # 找到大组中与小组最相似的客户端进行移动
                 best_move_idx = -1
-                best_move_score = float('inf')
+                best_move_score = float("inf")
 
                 for i, client_in_big in enumerate(big_group):
                     # 计算该客户端与小组的平均距离
-                    avg_dist_to_small = np.mean([distance_matrix[client_in_big][j] for j in small_group]) if len(small_group) > 0 else 0
+                    avg_dist_to_small = (
+                        np.mean(
+                            [distance_matrix[client_in_big][j] for j in small_group]
+                        )
+                        if len(small_group) > 0
+                        else 0
+                    )
                     # 计算该客户端与大组其他成员的平均距离
-                    avg_dist_to_big = np.mean([distance_matrix[client_in_big][j] for j in big_group if j != client_in_big])
+                    avg_dist_to_big = np.mean(
+                        [
+                            distance_matrix[client_in_big][j]
+                            for j in big_group
+                            if j != client_in_big
+                        ]
+                    )
 
                     # 移动评分：更倾向于移动与小组相似、与大组不太相似的客户端
                     move_score = avg_dist_to_small - avg_dist_to_big
@@ -395,18 +446,24 @@ class FedGS_Splitter(BaseSplitter):
                     client_to_move = big_group[best_move_idx]
                     # 从大组移除，加入小组
                     self.peer_communities[max_idx] = np.delete(big_group, best_move_idx)
-                    self.peer_communities[min_idx] = np.append(small_group, client_to_move)
+                    self.peer_communities[min_idx] = np.append(
+                        small_group, client_to_move
+                    )
                     group_sizes[max_idx] -= 1
                     group_sizes[min_idx] += 1
                     changed = True
-                    logger.info(f"Moved client {client_to_move + 1} from group {max_idx + 1} to group {min_idx + 1}")
+                    logger.info(
+                        f"Moved client {client_to_move + 1} from group {max_idx + 1} to group {min_idx + 1}"
+                    )
 
             if not changed:
                 break
             iteration += 1
 
         final_group_sizes = [len(pc) for pc in self.peer_communities]
-        logger.info(f"Final group sizes after {iteration} iterations: {final_group_sizes}")
+        logger.info(
+            f"Final group sizes after {iteration} iterations: {final_group_sizes}"
+        )
         # ========== 轻量化的组内人数均衡后处理结束 ==========
         # 计算并保存每个社区的平均分布
         community_distributions = []
@@ -414,7 +471,7 @@ class FedGS_Splitter(BaseSplitter):
             community_dist = np.zeros_like(normalized_distributions[0])
             total_samples = 0
             for client_idx in community:
-                client_dist = self.data_info[client_idx]['distribution']
+                client_dist = self.data_info[client_idx]["distribution"]
                 client_samples = np.sum(client_dist)
                 community_dist += client_dist
                 total_samples += client_samples
@@ -422,9 +479,10 @@ class FedGS_Splitter(BaseSplitter):
                 community_dist = community_dist / total_samples
             community_distributions.append(community_dist)
         self.save_peer_communities()
-        logger.info("\n========== Peer Communities Summary (Improved with Balance-Aware Clustering) ==========")
         logger.info(
-            f"Number of Peer Communities (PCs): {len(self.peer_communities)}")
+            "\n========== Peer Communities Summary (Improved with Balance-Aware Clustering) =========="
+        )
+        logger.info(f"Number of Peer Communities (PCs): {len(self.peer_communities)}")
         logger.info(f"Distance threshold used: {best_threshold:.4f}")
         logger.info(f"Balance score achieved: {best_score:.4f}")
 
@@ -436,14 +494,14 @@ class FedGS_Splitter(BaseSplitter):
         logger.info(f"Size statistics - Mean: {size_mean:.2f}, Std: {size_std:.2f}")
 
         for idx, (pc, pc_dist) in enumerate(
-                zip(self.peer_communities, community_distributions)):
+            zip(self.peer_communities, community_distributions)
+        ):
             logger.info(f"\nPeer Community {idx + 1}:")
             logger.info(f"Number of clients: {len(pc)}")
             # 显示时将客户端ID加1
             display_indices = [i + 1 for i in pc.tolist()]
             logger.info(f"Client indices: {display_indices}")
-            logger.info(
-                f"Normalized community distribution: {pc_dist.tolist()}")
+            logger.info(f"Normalized community distribution: {pc_dist.tolist()}")
             logger.info(
                 f"Distribution percentages: {['%.2f%%' % (p*100) for p in pc_dist]}"
             )
@@ -451,16 +509,16 @@ class FedGS_Splitter(BaseSplitter):
             for i in pc:
                 for j in pc:
                     if i < j:
-                        max_internal_dist = max(max_internal_dist,
-                                                distance_matrix[i][j])
+                        max_internal_dist = max(
+                            max_internal_dist, distance_matrix[i][j]
+                        )
             logger.info(f"Maximum internal distance: {max_internal_dist:.4f}")
 
-            logger.info("\nDetailed client distributions in this community:")
+            logger.info("Detailed client distributions in this community:")
             for client_idx in pc:
-                client_dist = self.data_info[client_idx]['distribution']
+                client_dist = self.data_info[client_idx]["distribution"]
                 client_total = np.sum(client_dist)
-                client_percentages = (client_dist / client_total *
-                                      100).tolist()
+                client_percentages = (client_dist / client_total * 100).tolist()
                 # 显示时将客户端ID加1
                 display_id = client_idx + 1
                 logger.info(f"Client {display_id}:")
@@ -477,10 +535,9 @@ class FedGS_Splitter(BaseSplitter):
         self.call_count += 1
         tmp_dataset = [ds for ds in dataset]
         label = np.array([y for x, y in tmp_dataset])
-        idx_slice = dirichlet_distribution_noniid_slice(label,
-                                                        self.client_num,
-                                                        self.alpha,
-                                                        prior=prior)
+        idx_slice = dirichlet_distribution_noniid_slice(
+            label, self.client_num, self.alpha, prior=prior
+        )
 
         # 用调用次数判断数据集类型
         if self.call_count == 1:
@@ -493,13 +550,13 @@ class FedGS_Splitter(BaseSplitter):
                 client_labels = label[client_indices]
                 client_dist = np.zeros(num_classes, dtype=int)
                 for label_idx, label_class in enumerate(unique_labels):
-                    mask = (client_labels == float(label_class))
+                    mask = client_labels == float(label_class)
                     client_dist[label_idx] = np.sum(mask)
                 client_distributions.append(client_dist)
                 if client_idx >= len(self.data_info):
-                    self.data_info.append({'distribution': client_dist.copy()})
+                    self.data_info.append({"distribution": client_dist.copy()})
                 else:
-                    self.data_info[client_idx]['distribution'] = client_dist
+                    self.data_info[client_idx]["distribution"] = client_dist
             self.save_data_info()
             self.build_peer_communities(client_distributions)
         elif self.call_count == 3:
@@ -512,10 +569,9 @@ class FedGS_Splitter(BaseSplitter):
                 client_labels = label[client_indices]
                 client_dist = np.zeros(num_classes, dtype=int)
                 for label_idx, label_class in enumerate(unique_labels):
-                    mask = (client_labels == float(label_class))
+                    mask = client_labels == float(label_class)
                     client_dist[label_idx] = np.sum(mask)
-                self.test_data_info.append(
-                    {'distribution': client_dist.copy()})
+                self.test_data_info.append({"distribution": client_dist.copy()})
             self.save_test_data_info()
             logger.info("Test set data distribution has been saved.")
         # 第二次调用为验证集，不做特殊处理
@@ -543,17 +599,15 @@ def _split_according_to_prior(label, client_num, prior):
     for k in range(classes):
         idx_k = np.where(label == k)[0]
         np.random.shuffle(idx_k)
-        nums_k = np.ceil(frequency[:, k] / sum_frequency[k] *
-                         len(idx_k)).astype(int)
+        nums_k = np.ceil(frequency[:, k] / sum_frequency[k] * len(idx_k)).astype(int)
         while len(idx_k) < np.sum(nums_k):
             random_client = np.random.choice(range(client_num))
             if nums_k[random_client] > 0:
                 nums_k[random_client] -= 1
         assert len(idx_k) == np.sum(nums_k)
         idx_slice = [
-            idx_j + idx.tolist() for idx_j, idx in zip(
-                idx_slice, np.split(idx_k,
-                                    np.cumsum(nums_k)[:-1]))
+            idx_j + idx.tolist()
+            for idx_j, idx in zip(idx_slice, np.split(idx_k, np.cumsum(nums_k)[:-1]))
         ]
 
     for i in range(len(idx_slice)):
@@ -561,11 +615,9 @@ def _split_according_to_prior(label, client_num, prior):
     return idx_slice
 
 
-def dirichlet_distribution_noniid_slice(label,
-                                        client_num,
-                                        alpha,
-                                        min_size=1,
-                                        prior=None):
+def dirichlet_distribution_noniid_slice(
+    label, client_num, alpha, min_size=1, prior=None
+):
     r"""Get sample index list for each client from the Dirichlet distribution.
     https://github.com/FedML-AI/FedML/blob/master/fedml_core/non_iid
     partition/noniid_partition.py
@@ -579,16 +631,16 @@ def dirichlet_distribution_noniid_slice(label,
         idx_slice (List): List of splited label index slice.
     """
     if len(label.shape) != 1:
-        raise ValueError('Only support single-label tasks!')
+        raise ValueError("Only support single-label tasks!")
 
     if prior is not None:
         return _split_according_to_prior(label, client_num, prior)
 
     num = len(label)
     classes = len(np.unique(label))
-    assert num > client_num * min_size, f'The number of sample should be ' \
-                                        f'greater than' \
-                                        f' {client_num * min_size}.'
+    assert num > client_num * min_size, (
+        f"The number of sample should be " f"greater than" f" {client_num * min_size}."
+    )
     size = 0
     while size < min_size:
         idx_slice = [[] for _ in range(client_num)]
@@ -615,9 +667,9 @@ def dirichlet_distribution_noniid_slice(label,
 
 
 def call_my_splitter(splitter_type, client_num, **kwargs):
-    if splitter_type == 'fedgs':
+    if splitter_type == "fedgs":
         splitter = FedGS_Splitter(client_num, **kwargs)
         return splitter
 
 
-register_splitter('fedgs', call_my_splitter)
+register_splitter("fedgs", call_my_splitter)

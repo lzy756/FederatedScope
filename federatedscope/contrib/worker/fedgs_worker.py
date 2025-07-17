@@ -7,9 +7,11 @@ import os
 import json
 import math
 from pulp import *  # For linear programming solver
+
 try:
     import gurobipy as gp
     from gurobipy import GRB
+
     GUROBI_AVAILABLE = True
 except ImportError:
     GUROBI_AVAILABLE = False
@@ -31,28 +33,42 @@ class FedGSServer(Server):
     - Implements intra-group and inter-group aggregation
     - Uses FedGSAggregator for model aggregation
     """
-    def __init__(self,
-                 ID=-1,
-                 state=0,
-                 config=None,
-                 data=None,
-                 model=None,
-                 client_num=5,
-                 total_round_num=10,
-                 device='cpu',
-                 strategy=None,
-                 unseen_clients_id=None,
-                 **kwargs):
-        super().__init__(ID, state, config, data, model, client_num,
-                         total_round_num, device, strategy, unseen_clients_id,
-                         **kwargs)
+
+    def __init__(
+        self,
+        ID=-1,
+        state=0,
+        config=None,
+        data=None,
+        model=None,
+        client_num=5,
+        total_round_num=10,
+        device="cpu",
+        strategy=None,
+        unseen_clients_id=None,
+        **kwargs,
+    ):
+        super().__init__(
+            ID,
+            state,
+            config,
+            data,
+            model,
+            client_num,
+            total_round_num,
+            device,
+            strategy,
+            unseen_clients_id,
+            **kwargs,
+        )
 
         # FedGS specific parameters
-        self.num_groups = config.fedgs.num_groups  # K: Number of peer communities (clusters)
+        self.num_groups = (
+            config.fedgs.num_groups
+        )  # K: Number of peer communities (clusters)
 
         # FedSAK specific parameters
-        self.agg_lmbda = config.aggregator.get("lambda_",
-                                               1e-3)  # FedSAK的lambda参数
+        self.agg_lmbda = config.aggregator.get("lambda_", 1e-3)  # FedSAK的lambda参数
         self.share_patterns = config.fedsak.share_patterns  # 共享层配置
         # 初始化客户端选择样本ID列表（当前轮次的）
         self.sample_client_ids = []
@@ -72,15 +88,18 @@ class FedGSServer(Server):
 
         # Template solving parameters
         self.L = config.fedgs.get("L", 5)  # Additional clients to select per round
-        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
+        self.n_batch_size = config.dataloader.get(
+            "batch_size", 32
+        )  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
         self.template_solved = False  # Flag to indicate if template is solved
 
         # Group related
-        self.groups = [[] for _ in range(self.num_groups)
-                       ]  # Store clients in each group
+        self.groups = [
+            [] for _ in range(self.num_groups)
+        ]  # Store clients in each group
         self.client_groups = {}  # Record which group each client belongs to
 
         # Performance tracking
@@ -118,29 +137,30 @@ class FedGSServer(Server):
 
         # Solve template once at initialization
         if not self._solve_template_once():
-            logger.warning(
-                "Template solving failed, will use fallback strategy")
+            logger.warning("Template solving failed, will use fallback strategy")
             return False
 
         return True
 
     def _load_and_process_communities(self):
         """Load PC information from file and process data distribution"""
-        peer_communities_path = 'peer_communities.txt'
-        data_info_path = 'data_info.txt'
-        test_data_path = 'test_data_info.txt'
+        peer_communities_path = "peer_communities.txt"
+        data_info_path = "data_info.txt"
+        test_data_path = "test_data_info.txt"
 
         # Load test set distribution first (this will be our target)
         if not os.path.exists(test_data_path):
             logger.warning(
-                f"Test set distribution file {test_data_path} does not exist")
+                f"Test set distribution file {test_data_path} does not exist"
+            )
             return False
 
         try:
-            with open(test_data_path, 'r', encoding='utf-8') as f:
+            with open(test_data_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                json_start = content.find('\nRaw Data (JSON format):\n') + len(
-                    '\nRaw Data (JSON format):\n')
+                json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                    "\nRaw Data (JSON format):\n"
+                )
                 json_data = json.loads(content[json_start:])
 
                 # Calculate test set distribution
@@ -148,7 +168,7 @@ class FedGSServer(Server):
                 total_samples = 0
 
                 # Sum up all samples across clients
-                for client_dist in json_data['test_data_info']:
+                for client_dist in json_data["test_data_info"]:
                     for label, count in enumerate(client_dist):
                         if str(label) not in test_dist:
                             test_dist[str(label)] = 0
@@ -156,7 +176,7 @@ class FedGSServer(Server):
                         total_samples += count
 
                 # Set number of classes
-                self.num_classes = len(json_data['test_data_info'][0])
+                self.num_classes = len(json_data["test_data_info"][0])
 
                 # Normalize to get distribution
                 if total_samples > 0:
@@ -165,8 +185,7 @@ class FedGSServer(Server):
 
                 # Store test distribution as target
                 self.target_distribution = test_dist
-                logger.info(
-                    f"Using test set distribution as target: {test_dist}")
+                logger.info(f"Using test set distribution as target: {test_dist}")
 
         except Exception as e:
             logger.error(f"Error loading test set distribution: {str(e)}")
@@ -174,23 +193,22 @@ class FedGSServer(Server):
 
         # Load training data distribution
         if not os.path.exists(data_info_path):
-            logger.warning(
-                f"Data distribution file {data_info_path} does not exist")
+            logger.warning(f"Data distribution file {data_info_path} does not exist")
             return False
 
         try:
-            with open(data_info_path, 'r', encoding='utf-8') as f:
+            with open(data_info_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                json_start = content.find('\nRaw Data (JSON format):\n') + len(
-                    '\nRaw Data (JSON format):\n')
+                json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                    "\nRaw Data (JSON format):\n"
+                )
                 json_data = json.loads(content[json_start:])
 
                 # Update client data distribution information
                 self.client_data_dist = {}
-                for client_id, dist in enumerate(json_data['data_info']):
+                for client_id, dist in enumerate(json_data["data_info"]):
                     self.client_data_dist[str(client_id)] = {
-                        str(label): count
-                        for label, count in enumerate(dist)
+                        str(label): count for label, count in enumerate(dist)
                     }
 
                 logger.info(
@@ -204,19 +222,20 @@ class FedGSServer(Server):
         # Load PC information
         if not os.path.exists(peer_communities_path):
             logger.warning(
-                f"PC information file {peer_communities_path} does not exist")
+                f"PC information file {peer_communities_path} does not exist"
+            )
             return False
 
         try:
-            with open(peer_communities_path, 'r', encoding='utf-8') as f:
+            with open(peer_communities_path, "r", encoding="utf-8") as f:
                 content = f.read()
-                json_start = content.find('\nRaw Data (JSON format):\n') + len(
-                    '\nRaw Data (JSON format):\n')
+                json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                    "\nRaw Data (JSON format):\n"
+                )
                 json_data = json.loads(content[json_start:])
-                self.peer_communities = json_data['peer_communities']
+                self.peer_communities = json_data["peer_communities"]
 
-                logger.info(
-                    f"Loaded {len(self.peer_communities)} Peer Communities")
+                logger.info(f"Loaded {len(self.peer_communities)} Peer Communities")
 
                 # Template will be solved in _solve_template_once()
                 return True
@@ -250,41 +269,38 @@ class FedGSServer(Server):
         # Output grouping information
         logger.info("Client grouping completed:")
         for group_id, clients in enumerate(self.groups):
-            logger.info(
-                f"Group #{group_id + 1}: {len(clients)} clients - {clients}")
+            logger.info(f"Group #{group_id + 1}: {len(clients)} clients - {clients}")
 
         self.is_grouped = True
 
     def _load_saved_groups(self):
         """Load saved grouping information and data distribution information"""
-        peer_communities_path = 'peer_communities.txt'
-        data_info_path = 'data_info.txt'
+        peer_communities_path = "peer_communities.txt"
+        data_info_path = "data_info.txt"
 
         # First load data distribution information
         if os.path.exists(data_info_path):
             try:
-                with open(data_info_path, 'r', encoding='utf-8') as f:
+                with open(data_info_path, "r", encoding="utf-8") as f:
                     content = f.read()
                     # Find JSON data section
-                    json_start = content.find(
-                        '\nRaw Data (JSON format):\n') + len(
-                            '\nRaw Data (JSON format):\n')
+                    json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                        "\nRaw Data (JSON format):\n"
+                    )
                     json_data = json.loads(content[json_start:])
 
                     # Update client data distribution information
                     self.client_data_dist = {}
-                    for client_id, dist in enumerate(json_data['data_info']):
+                    for client_id, dist in enumerate(json_data["data_info"]):
                         self.client_data_dist[str(client_id)] = {
-                            str(label): count
-                            for label, count in enumerate(dist)
+                            str(label): count for label, count in enumerate(dist)
                         }
 
                     # Calculate global data distribution
                     self._calculate_global_distribution()
 
             except Exception as e:
-                logger.warning(
-                    f"Error loading data distribution information: {str(e)}")
+                logger.warning(f"Error loading data distribution information: {str(e)}")
                 return False
         else:
             logger.warning(
@@ -295,14 +311,14 @@ class FedGSServer(Server):
         # Then load grouping information
         if os.path.exists(peer_communities_path):
             try:
-                with open(peer_communities_path, 'r', encoding='utf-8') as f:
+                with open(peer_communities_path, "r", encoding="utf-8") as f:
                     content = f.read()
                     # Find JSON data section
-                    json_start = content.find(
-                        '\nRaw Data (JSON format):\n') + len(
-                            '\nRaw Data (JSON format):\n')
+                    json_start = content.find("\nRaw Data (JSON format):\n") + len(
+                        "\nRaw Data (JSON format):\n"
+                    )
                     json_data = json.loads(content[json_start:])
-                    communities = json_data['peer_communities']
+                    communities = json_data["peer_communities"]
 
                     # Update grouping information
                     self.groups = communities
@@ -355,18 +371,15 @@ class FedGSServer(Server):
         for label, percentage in sorted(self.global_data_dist.items()):
             logger.info(f"Class {label}: {percentage*100:.2f}%")
 
-
-
-
-
-
     def _register_default_handlers(self):
         """Register message processing functions"""
         super()._register_default_handlers()
-        self.register_handlers('model_para',
-                               self.callback_funcs_for_model_para,
-                               ['model_para', 'evaluate', 'finish'])
-        self.register_handlers('join_in', self.callback_funcs_for_join_in)
+        self.register_handlers(
+            "model_para",
+            self.callback_funcs_for_model_para,
+            ["model_para", "evaluate", "finish"],
+        )
+        self.register_handlers("join_in", self.callback_funcs_for_join_in)
 
     def callback_funcs_for_join_in(self, message: Message):
         """Handle client joining"""
@@ -376,10 +389,10 @@ class FedGSServer(Server):
 
     def _sample_clients(self, group_id):
         """Select clients based on sampling strategy
-        
+
         Args:
             group_id: Group ID
-            
+
         Returns:
             sampled_clients: List of sampled clients
         """
@@ -387,10 +400,10 @@ class FedGSServer(Server):
         if not group_clients:
             return []
 
-        if self.sampler == 'uniform':  # Uniform sampling
+        if self.sampler == "uniform":  # Uniform sampling
             return group_clients  # Return all clients in the group
 
-        elif self.sampler == 'gbp-cs':  # Gradient-Based Priority with Client Selection
+        elif self.sampler == "gbp-cs":  # Gradient-Based Priority with Client Selection
             # Calculate weights for each client
             weights = []
             for client_id in group_clients:
@@ -413,13 +426,13 @@ class FedGSServer(Server):
 
     def _update_client_weights(self, round_idx, client_id, performance):
         """Update client sampling weights
-        
+
         Args:
             round_idx: Current round
             client_id: Client ID
             performance: Client performance metric
         """
-        if self.sampler != 'gbp-cs':
+        if self.sampler != "gbp-cs":
             return
 
         # Update client score
@@ -437,70 +450,79 @@ class FedGSServer(Server):
             # Update weights
             self.client_weights[client_id] = max(
                 0.1,  # Minimum weight
-                self.client_weights.get(client_id, 1.0) + improvement)
+                self.client_weights.get(client_id, 1.0) + improvement,
+            )
 
-    def broadcast_model_para(self,
-                             msg_type='model_para',
-                             sample_client_num=-1,
-                             filter_unseen_clients=True):
+    def broadcast_model_para(
+        self, msg_type="model_para", sample_client_num=-1, filter_unseen_clients=True
+    ):
         """Broadcast model parameters to clients"""
         if self.state >= self._cfg.federate.total_round_num:
-            self.terminate(msg_type='finish')
+            self.terminate(msg_type="finish")
             return
 
         # If it's an evaluation request, send directly to all clients
-        if msg_type == 'evaluate':
+        if msg_type == "evaluate":
             receiver = list(self.comm_manager.neighbors.keys())
             for rcv_idx in receiver:
                 # 如果有个性化切片，使用客户端的个性化模型进行评估
                 content = None
-                if hasattr(self, "personalized_slices"
-                           ) and rcv_idx in self.personalized_slices:
+                if (
+                    hasattr(self, "personalized_slices")
+                    and rcv_idx in self.personalized_slices
+                ):
                     content = self.personalized_slices[rcv_idx]
                 else:
                     content = None
 
                 self.comm_manager.send(
-                    Message(msg_type=msg_type,
-                            sender=self.ID,
-                            receiver=[rcv_idx],
-                            state=self.state,
-                            content=content))
+                    Message(
+                        msg_type=msg_type,
+                        sender=self.ID,
+                        receiver=[rcv_idx],
+                        state=self.state,
+                        content=content,
+                    )
+                )
             return
 
-            # 首先，如果存在个性化切片且有上一轮的客户端，先发送结果给上一轮的客户端
-        if hasattr(self,
-                   "personalized_slices") and self.prev_sample_client_ids:
+        # 首先，如果存在个性化切片且有上一轮的客户端，先发送结果给上一轮的客户端
+        if hasattr(self, "personalized_slices") and self.prev_sample_client_ids:
             for cid in self.prev_sample_client_ids:
                 if cid in self.personalized_slices:
                     logger.debug(f"Send personalized slice to C{cid}")
                     # 使用新消息类型update_model，只更新模型不触发训练
                     self.comm_manager.send(
-                        Message(msg_type="update_model",
-                                sender=self.ID,
-                                receiver=[cid],
-                                state=self.state,
-                                content=self.personalized_slices[cid]))
+                        Message(
+                            msg_type="update_model",
+                            sender=self.ID,
+                            receiver=[cid],
+                            state=self.state,
+                            content=self.personalized_slices[cid],
+                        )
+                    )
             self.prev_sample_client_ids = []
 
         # 确保所有客户端状态正确设置为"空闲"
         all_client_ids = list(self.comm_manager.neighbors.keys())
-        self.sampler.change_state(all_client_ids, 'idle')
+        self.sampler.change_state(all_client_ids, "idle")
 
         # 然后，采样新的客户端进行下一轮训练
         if filter_unseen_clients:
             # 适配父类方法的用法
-            self.sampler.change_state(self.unseen_clients_id, 'unseen')
+            self.sampler.change_state(self.unseen_clients_id, "unseen")
 
         # Select clients from each cluster using pre-solved template
-        self.selected_clients_per_cluster = self._select_clients_from_clusters(self.state)
+        self.selected_clients_per_cluster = self._select_clients_from_clusters(
+            self.state
+        )
         if not any(self.selected_clients_per_cluster.values()):
             logger.warning(
                 f"Failed to select clients for round {self.state}, skipping this round"
             )
             self.state += 1
             if self.state < self._cfg.federate.total_round_num:
-                self.broadcast_model_para(msg_type='model_para')
+                self.broadcast_model_para(msg_type="model_para")
             return
 
         # Broadcast model parameters to all selected clients in all clusters
@@ -508,43 +530,51 @@ class FedGSServer(Server):
         for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
             if cluster_clients:
                 sampled_clients.extend(cluster_clients)
-                logger.info(f'Cluster #{cluster_idx + 1}: {len(cluster_clients)} clients - {cluster_clients}')
+                logger.info(
+                    f"Cluster #{cluster_idx + 1}: {len(cluster_clients)} clients - {cluster_clients}"
+                )
 
         logger.info(
-            f'Server: Broadcasting model parameters to {len(sampled_clients)} clients...'
+            f"Server: Broadcasting model parameters to {len(sampled_clients)} clients..."
         )
-        self.sampler.change_state(sampled_clients, 'working')
+        self.sampler.change_state(sampled_clients, "working")
         self.sample_client_ids = sampled_clients
 
         for client_id in sampled_clients:
             if self.state == 0 or not hasattr(self, "personalized_slices"):
                 content = self.model.state_dict()
                 self.comm_manager.send(
-                    Message(msg_type="model_para",
-                            sender=self.ID,
-                            receiver=[client_id],
-                            state=self.state,
-                            content=content))
+                    Message(
+                        msg_type="model_para",
+                        sender=self.ID,
+                        receiver=[client_id],
+                        state=self.state,
+                        content=content,
+                    )
+                )
             else:
                 content = None
                 if client_id in self.personalized_slices:
                     content = self.personalized_slices[client_id]
                 self.comm_manager.send(
-                    Message(msg_type="trigger_train",
-                            sender=self.ID,
-                            receiver=[client_id],
-                            state=self.state,
-                            content=content))
+                    Message(
+                        msg_type="trigger_train",
+                        sender=self.ID,
+                        receiver=[client_id],
+                        state=self.state,
+                        content=content,
+                    )
+                )
 
-        logger.info('Server: Finished model broadcasting')
+        logger.info("Server: Finished model broadcasting")
 
     def _select_clients_for_cc(self, pc_clients, target_size):
         """Select clients from PC to form CC based on sample counts
-        
+
         Args:
             pc_clients: List of clients in PC
             target_size: Number of clients to select
-            
+
         Returns:
             selected_clients: List of selected clients
         """
@@ -555,8 +585,7 @@ class FedGSServer(Server):
         logger.info(f"Available clients: {pc_clients}")
 
         # Get target sample counts based on target distribution
-        total_target_samples = sum(
-            self._get_raw_distribution(pc_clients).values())
+        total_target_samples = sum(self._get_raw_distribution(pc_clients).values())
         target_samples = {
             str(i): total_target_samples * ratio
             for i, ratio in enumerate(self.target_distribution)
@@ -566,8 +595,7 @@ class FedGSServer(Server):
         client_samples = {}
         for client_id in pc_clients:
             if str(client_id) in self.client_data_dist:
-                client_samples[client_id] = self.client_data_dist[str(
-                    client_id)]
+                client_samples[client_id] = self.client_data_dist[str(client_id)]
 
         # Add random noise to client selection
         noise_scale = 0.1  # Scale of random noise
@@ -591,12 +619,8 @@ class FedGSServer(Server):
                 client_scores[client_id] = -diff + noise
 
         # Sort clients by score and select top-k
-        sorted_clients = sorted(client_scores.items(),
-                                key=lambda x: x[1],
-                                reverse=True)
-        selected_clients = [
-            client_id for client_id, _ in sorted_clients[:target_size]
-        ]
+        sorted_clients = sorted(client_scores.items(), key=lambda x: x[1], reverse=True)
+        selected_clients = [client_id for client_id, _ in sorted_clients[:target_size]]
 
         # Shuffle selected clients to add more randomness
         random.shuffle(selected_clients)
@@ -604,24 +628,22 @@ class FedGSServer(Server):
         logger.info(f"Selected clients: {selected_clients}")
         return selected_clients
 
-
-
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters from clients"""
         round, sender, content = message.state, message.sender, message.content
 
         # Update state
-        if round not in self.msg_buffer['train']:
-            self.msg_buffer['train'][round] = dict()
+        if round not in self.msg_buffer["train"]:
+            self.msg_buffer["train"][round] = dict()
 
         # Save client uploaded model
-        self.msg_buffer['train'][round][sender] = content
+        self.msg_buffer["train"][round][sender] = content
         logger.info(
-            f'Server: Received model parameters from client {sender} for round {round}'
+            f"Server: Received model parameters from client {sender} for round {round}"
         )
 
         # Check if received all responses from all selected clients
-        if not hasattr(self, 'selected_clients_per_cluster'):
+        if not hasattr(self, "selected_clients_per_cluster"):
             logger.warning("No selected clients found, skipping aggregation")
             return True
 
@@ -631,7 +653,7 @@ class FedGSServer(Server):
         for cluster_clients in self.selected_clients_per_cluster.values():
             for client_id in cluster_clients:
                 expected_total += 1
-                if client_id in self.msg_buffer['train'][round]:
+                if client_id in self.msg_buffer["train"][round]:
                     received_total += 1
 
         if received_total < expected_total:
@@ -640,7 +662,7 @@ class FedGSServer(Server):
 
         # All responses received, start two-layer aggregation
         logger.info(
-            'Server: All selected clients have responded, starting two-layer aggregation'
+            "Server: All selected clients have responded, starting two-layer aggregation"
         )
 
         # First step: Intra-cluster aggregation using FedAvg
@@ -652,43 +674,45 @@ class FedGSServer(Server):
             # Prepare model parameters for intra-cluster clients
             cluster_feedback = []
             for client_id in cluster_clients:
-                if client_id in self.msg_buffer['train'][round]:
-                    content = self.msg_buffer['train'][round][client_id]
+                if client_id in self.msg_buffer["train"][round]:
+                    content = self.msg_buffer["train"][round][client_id]
                     if isinstance(content, tuple) and len(content) == 2:
                         sample_size, model_para = content
                     else:
                         sample_size = 1
                         model_para = content
                     client_info = {
-                        'client_id': client_id,
-                        'sample_size': sample_size,
-                        'model_para': model_para
+                        "client_id": client_id,
+                        "sample_size": sample_size,
+                        "model_para": model_para,
                     }
                     cluster_feedback.append(client_info)
 
             if cluster_feedback:
                 logger.info(
-                    f'Server: Performing intra-cluster FedAvg aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients'
+                    f"Server: Performing intra-cluster FedAvg aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients"
                 )
                 # Use FedAvg for intra-cluster aggregation
                 result = self.aggregator.aggregate_intra_group(cluster_feedback)
                 cluster_models[cluster_idx] = {
-                    'model': result,
-                    'size': sum(client['sample_size'] for client in cluster_feedback)
+                    "model": result,
+                    "size": sum(client["sample_size"] for client in cluster_feedback),
                 }
 
         # Second step: Inter-cluster aggregation using FedSAK
         if cluster_models:
             logger.info(
-                f'Server: Performing inter-cluster FedSAK aggregation with {len(cluster_models)} clusters'
+                f"Server: Performing inter-cluster FedSAK aggregation with {len(cluster_models)} clusters"
             )
             cluster_feedback = []
             for cluster_idx, cluster_info in cluster_models.items():
-                cluster_feedback.append({
-                    'client_id': f'cluster_{cluster_idx}',
-                    'sample_size': cluster_info['size'],
-                    'model_para': cluster_info['model']
-                })
+                cluster_feedback.append(
+                    {
+                        "client_id": f"cluster_{cluster_idx}",
+                        "sample_size": cluster_info["size"],
+                        "model_para": cluster_info["model"],
+                    }
+                )
 
             # Use FedSAK aggregation method for inter-cluster aggregation
             result = self.aggregator.aggregate_inter_group(cluster_feedback)
@@ -699,18 +723,27 @@ class FedGSServer(Server):
                 # 构建一个临时空字典
                 temp_personalized_slices = {}
                 # 将cluster模型复制到对应客户端
-                for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
+                for (
+                    cluster_idx,
+                    cluster_clients,
+                ) in self.selected_clients_per_cluster.items():
                     cluster_key = f"cluster_{cluster_idx}"
                     if cluster_key in self.personalized_slices:
                         for client_id in cluster_clients:
-                            temp_personalized_slices[client_id] = self.personalized_slices[cluster_key]
+                            temp_personalized_slices[client_id] = (
+                                self.personalized_slices[cluster_key]
+                            )
                             # 输出调试信息
-                            logger.info(f'Copied model from {cluster_key} to client {client_id}')
+                            logger.info(
+                                f"Copied model from {cluster_key} to client {client_id}"
+                            )
                 self.personalized_slices = temp_personalized_slices
-            logger.info(f'type of personalized_slices: {type(self.personalized_slices)}')
-            logger.info(f'personalized_slices length: {len(self.personalized_slices)}')
+            logger.info(
+                f"type of personalized_slices: {type(self.personalized_slices)}"
+            )
+            logger.info(f"personalized_slices length: {len(self.personalized_slices)}")
             # 输出personalized_slices字典id
-            logger.info(f'personalized_slices keys: {self.personalized_slices.keys()}')
+            logger.info(f"personalized_slices keys: {self.personalized_slices.keys()}")
             # 现在和cluster数量相同，将相应的cluster的复制到对应选择
 
             # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
@@ -718,38 +751,40 @@ class FedGSServer(Server):
 
             if self.agg_lmbda == 0:
                 receiver = list(self.comm_manager.neighbors.keys())
-                avg_model = list(result['model_para_all'].values())[0]
+                avg_model = list(result["model_para_all"].values())[0]
                 for rcv_idx in receiver:
                     self.personalized_slices[rcv_idx] = avg_model
                 self.prev_sample_client_ids = receiver.copy()
                 print("avg_receiver:", self.prev_sample_client_ids)
 
             # 清理缓存
-            self.msg_buffer['train'][round].clear()
+            self.msg_buffer["train"][round].clear()
             self.state += 1
 
             # 检查是否需要执行评估
-            if (self.state % self._cfg.eval.freq == 0
-                    and self.state != self._cfg.federate.total_round_num):
-                logger.info(
-                    f'Server: Starting evaluation at round {self.state}')
+            if (
+                self.state % self._cfg.eval.freq == 0
+                and self.state != self._cfg.federate.total_round_num
+            ):
+                logger.info(f"Server: Starting evaluation at round {self.state}")
                 self.eval()
 
             # 检查是否继续训练
             if self.state < self._cfg.federate.total_round_num:
-                logger.info('----------- Starting training ' +
-                            f'(Round #{self.state}) -------------')
-                self.broadcast_model_para(msg_type='model_para')
-            else:
                 logger.info(
-                    'Server: Training is finished! Starting final evaluation.')
+                    "----------- Starting training "
+                    + f"(Round #{self.state}) -------------"
+                )
+                self.broadcast_model_para(msg_type="model_para")
+            else:
+                logger.info("Server: Training is finished! Starting final evaluation.")
                 self.eval()
 
         return True
 
     def eval(self):
         """Perform evaluation on server side
-        
+
         When cfg.federate.make_global_eval=True, server will perform global evaluation.
         Otherwise, evaluation task will be distributed to clients to execute.
         """
@@ -760,27 +795,29 @@ class FedGSServer(Server):
                 # Execute evaluation on server side
                 metrics = {}
                 for split in self._cfg.eval.split:
-                    eval_metrics = trainer.evaluate(
-                        target_data_split_name=split)
+                    eval_metrics = trainer.evaluate(target_data_split_name=split)
                     metrics.update(**eval_metrics)
 
                 # Format evaluation results
                 formatted_eval_res = self._monitor.format_eval_res(
                     metrics,
                     rnd=self.state,
-                    role='Server #',
+                    role="Server #",
                     forms=self._cfg.eval.report,
-                    return_raw=self._cfg.federate.make_global_eval)
+                    return_raw=self._cfg.federate.make_global_eval,
+                )
 
                 # Update best results
                 self._monitor.update_best_result(
                     self.best_results,
-                    formatted_eval_res['Results_raw'],
-                    results_type="server_global_eval")
+                    formatted_eval_res["Results_raw"],
+                    results_type="server_global_eval",
+                )
 
                 # Merge historical results
                 self.history_results = merge_dict_of_results(
-                    self.history_results, formatted_eval_res)
+                    self.history_results, formatted_eval_res
+                )
 
                 # Save formatted results
                 self._monitor.save_formatted_results(formatted_eval_res)
@@ -790,20 +827,21 @@ class FedGSServer(Server):
             self.check_and_save()
         else:
             # Execute evaluation on clients
-            logger.info('Server: Broadcasting model for client evaluation')
-            self.broadcast_model_para(msg_type='evaluate',
-                                      filter_unseen_clients=False)
+            logger.info("Server: Broadcasting model for client evaluation")
+            self.broadcast_model_para(msg_type="evaluate", filter_unseen_clients=False)
 
     def _calculate_features(self):
         """Calculate feature matrix P and target distribution"""
-        if not self.peer_communities or not hasattr(
-                self, 'num_classes') or self.num_classes is None:
+        if (
+            not self.peer_communities
+            or not hasattr(self, "num_classes")
+            or self.num_classes is None
+        ):
             logger.error("Missing PC information or number of classes")
             return False
 
         # Calculate average sample counts per client for each PC
-        self.pc_features = np.zeros(
-            (len(self.peer_communities), self.num_classes))
+        self.pc_features = np.zeros((len(self.peer_communities), self.num_classes))
 
         # Calculate average sample counts per client for each PC
         for k, pc in enumerate(self.peer_communities):
@@ -836,7 +874,11 @@ class FedGSServer(Server):
 
     def _solve_template_once(self):
         """Solve template h vector once at initialization using Binary Split method"""
-        if not self.peer_communities or not hasattr(self, 'num_classes') or self.num_classes is None:
+        if (
+            not self.peer_communities
+            or not hasattr(self, "num_classes")
+            or self.num_classes is None
+        ):
             logger.error("Missing PC information or number of classes")
             return False
 
@@ -894,8 +936,12 @@ class FedGSServer(Server):
                     self.A_matrix[f, k] = n_ck * p_ck_f
 
             # Build vector M: M = n(L+K) * P^{tar}
-            total_clients_selected = self.L + K  # L additional + K (at least one per cluster)
-            self.M_vector = self.n_batch_size * total_clients_selected * self.target_distribution
+            total_clients_selected = (
+                self.L + K
+            )  # L additional + K (at least one per cluster)
+            self.M_vector = (
+                self.n_batch_size * total_clients_selected * self.target_distribution
+            )
 
             logger.info(f"Matrix A shape: {self.A_matrix.shape}")
             logger.info(f"Vector M shape: {self.M_vector.shape}")
@@ -923,7 +969,9 @@ class FedGSServer(Server):
                 G.append(G_k)
                 total_binary_vars += G_k
 
-            logger.info(f"Binary decomposition: G = {G}, total binary vars = {total_binary_vars}")
+            logger.info(
+                f"Binary decomposition: G = {G}, total binary vars = {total_binary_vars}"
+            )
 
             # Step 2: Build transformation matrix T
             T_matrix = self._build_transformation_matrix(G)
@@ -960,7 +1008,7 @@ class FedGSServer(Server):
 
             # Create model
             model = gp.Model("BinarySplit")
-            model.setParam('OutputFlag', 0)  # Suppress output
+            model.setParam("OutputFlag", 0)  # Suppress output
 
             # Create binary variables
             b_vars = model.addVars(total_binary_vars, vtype=GRB.BINARY, name="b")
@@ -997,7 +1045,9 @@ class FedGSServer(Server):
                 # Add the mandatory 1 client per cluster
                 h_solution = h_solution + 1
 
-                logger.info(f"Gurobi solved successfully with objective value: {model.objVal}")
+                logger.info(
+                    f"Gurobi solved successfully with objective value: {model.objVal}"
+                )
                 return h_solution
             else:
                 logger.error(f"Gurobi optimization failed with status: {model.status}")
@@ -1019,43 +1069,59 @@ class FedGSServer(Server):
             prob = LpProblem("BinarySplit_Approx", LpMinimize)
 
             # Create binary variables
-            b_vars = [LpVariable(f"b_{j}", cat='Binary') for j in range(total_binary_vars)]
+            b_vars = [
+                LpVariable(f"b_{j}", cat="Binary") for j in range(total_binary_vars)
+            ]
 
             # Objective: minimize ||A*T*b - M||_2^2 (approximated as L1 norm)
             AT = self.A_matrix @ T_matrix
 
             # Create auxiliary variables for absolute values
-            aux_vars = [LpVariable(f"aux_{f}", lowBound=0) for f in range(self.num_classes)]
+            aux_vars = [
+                LpVariable(f"aux_{f}", lowBound=0) for f in range(self.num_classes)
+            ]
 
             # Objective: minimize sum of auxiliary variables
             prob += lpSum(aux_vars)
 
             # Constraints for auxiliary variables: aux_f >= |AT[f,:]*b - M[f]|
             for f in range(self.num_classes):
-                expr = lpSum(AT[f, j] * b_vars[j] for j in range(total_binary_vars)) - self.M_vector[f]
+                expr = (
+                    lpSum(AT[f, j] * b_vars[j] for j in range(total_binary_vars))
+                    - self.M_vector[f]
+                )
                 prob += aux_vars[f] >= expr
                 prob += aux_vars[f] >= -expr
 
             # Constraint: sum(T*b) = L
-            constraint_expr = lpSum(T_matrix[i, j] * b_vars[j]
-                                  for i in range(K) for j in range(total_binary_vars))
+            constraint_expr = lpSum(
+                T_matrix[i, j] * b_vars[j]
+                for i in range(K)
+                for j in range(total_binary_vars)
+            )
             prob += constraint_expr == self.L
 
             # Solve
             prob.solve()
 
-            if LpStatus[prob.status] == 'Optimal':
+            if LpStatus[prob.status] == "Optimal":
                 # Extract solution
-                b_solution = np.array([value(b_vars[j]) for j in range(total_binary_vars)])
+                b_solution = np.array(
+                    [value(b_vars[j]) for j in range(total_binary_vars)]
+                )
                 h_solution = T_matrix @ b_solution
 
                 # Add the mandatory 1 client per cluster
                 h_solution = h_solution + 1
 
-                logger.info(f"PuLP solved successfully with objective value: {value(prob.objective)}")
+                logger.info(
+                    f"PuLP solved successfully with objective value: {value(prob.objective)}"
+                )
                 return h_solution
             else:
-                logger.error(f"PuLP optimization failed with status: {LpStatus[prob.status]}")
+                logger.error(
+                    f"PuLP optimization failed with status: {LpStatus[prob.status]}"
+                )
                 return None
 
         except Exception as e:
@@ -1069,10 +1135,14 @@ class FedGSServer(Server):
             return {}
 
         # Set random seed for reproducible but different results per round
-        np.random.seed(round_idx + 42)  # Add offset to avoid collision with other random seeds
+        np.random.seed(
+            round_idx + 42
+        )  # Add offset to avoid collision with other random seeds
         random.seed(round_idx + 42)
 
-        logger.info(f"Round {round_idx}: Selecting clients from clusters using template h = {self.h_vector}")
+        logger.info(
+            f"Round {round_idx}: Selecting clients from clusters using template h = {self.h_vector}"
+        )
 
         # Select clients from each cluster based on the template
         selected_clients_per_cluster = {}
@@ -1099,7 +1169,9 @@ class FedGSServer(Server):
             selected_clients_per_cluster[k] = selected
 
         # Log the results
-        logger.info(f"Selected clients from {len(self.peer_communities)} clusters for round {round_idx}:")
+        logger.info(
+            f"Selected clients from {len(self.peer_communities)} clusters for round {round_idx}:"
+        )
         total_selected = 0
         all_selected_clients = []
 
@@ -1122,9 +1194,13 @@ class FedGSServer(Server):
                 logger.info(f"  Class {label}: {percentage*100:.2f}%")
 
             # Calculate L2 difference from target for overall distribution
-            overall_dist_array = np.array([overall_dist.get(str(i), 0) for i in range(self.num_classes)])
+            overall_dist_array = np.array(
+                [overall_dist.get(str(i), 0) for i in range(self.num_classes)]
+            )
             overall_diff = np.linalg.norm(overall_dist_array - self.target_distribution)
-            logger.info(f"Overall L2 difference from target distribution: {overall_diff:.4f}")
+            logger.info(
+                f"Overall L2 difference from target distribution: {overall_diff:.4f}"
+            )
 
         logger.info(f"Total clients selected across all clusters: {total_selected}")
         logger.info(f"Expected total (L + K): {self.L + len(self.peer_communities)}")
@@ -1133,10 +1209,10 @@ class FedGSServer(Server):
 
     def _get_raw_distribution(self, client_ids):
         """Calculate raw sample counts for given client set
-        
+
         Args:
             client_ids: List of client IDs
-            
+
         Returns:
             distribution: Data distribution dictionary, key is class, value is raw sample count
         """
@@ -1160,10 +1236,10 @@ class FedGSServer(Server):
 
     def _get_distribution(self, client_ids):
         """Calculate normalized distribution for given client set
-        
+
         Args:
             client_ids: List of client IDs
-            
+
         Returns:
             distribution: Data distribution dictionary, key is class, value is normalized ratio
         """
@@ -1185,20 +1261,34 @@ class FedGSServer(Server):
 
 class FedGSClient(Client):
     """FedGS client implementation"""
-    def __init__(self,
-                 ID=-1,
-                 server_id=None,
-                 state=-1,
-                 config=None,
-                 data=None,
-                 model=None,
-                 device='cpu',
-                 strategy=None,
-                 is_unseen_client=False,
-                 *args,
-                 **kwargs):
-        super().__init__(ID, server_id, state, config, data, model, device,
-                         strategy, is_unseen_client, *args, **kwargs)
+
+    def __init__(
+        self,
+        ID=-1,
+        server_id=None,
+        state=-1,
+        config=None,
+        data=None,
+        model=None,
+        device="cpu",
+        strategy=None,
+        is_unseen_client=False,
+        *args,
+        **kwargs,
+    ):
+        super().__init__(
+            ID,
+            server_id,
+            state,
+            config,
+            data,
+            model,
+            device,
+            strategy,
+            is_unseen_client,
+            *args,
+            **kwargs,
+        )
 
     def _register_default_handlers(self):
         """覆写默认消息处理函数注册"""
@@ -1206,18 +1296,24 @@ class FedGSClient(Client):
         super()._register_default_handlers()
 
         # 覆盖model_para处理器
-        self.register_handlers("model_para",
-                               self.callback_funcs_for_model_para,
-                               ['model_para', 'ss_model_para'])
+        self.register_handlers(
+            "model_para",
+            self.callback_funcs_for_model_para,
+            ["model_para", "ss_model_para"],
+        )
 
         # 注册新的消息处理器
-        self.register_handlers("update_model",
-                               self.callback_funcs_for_update_model,
-                               ['model_para', 'ss_model_para'])
+        self.register_handlers(
+            "update_model",
+            self.callback_funcs_for_update_model,
+            ["model_para", "ss_model_para"],
+        )
 
-        self.register_handlers("trigger_train",
-                               self.callback_funcs_for_trigger_train,
-                               ['model_para', 'ss_model_para'])
+        self.register_handlers(
+            "trigger_train",
+            self.callback_funcs_for_trigger_train,
+            ["model_para", "ss_model_para"],
+        )
 
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters update message"""
@@ -1234,20 +1330,21 @@ class FedGSClient(Client):
 
         # Output training results
         formatted_results = self._monitor.format_eval_res(
-            results,
-            rnd=self.state,
-            role='Client #{}'.format(self.ID),
-            return_raw=True)
+            results, rnd=self.state, role="Client #{}".format(self.ID), return_raw=True
+        )
         logger.info(formatted_results)
         model_para = self.trainer.get_model_para()
 
         # Send training results to server
         self.comm_manager.send(
-            Message(msg_type='model_para',
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, model_para)))
+            Message(
+                msg_type="model_para",
+                sender=self.ID,
+                receiver=[sender],
+                state=self.state,
+                content=(sample_size, model_para),
+            )
+        )
 
     def callback_funcs_for_update_model(self, message: Message):
         """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""
@@ -1283,29 +1380,35 @@ class FedGSClient(Client):
 
         # 记录训练结果到日志
         logger.info(
-            self._monitor.format_eval_res(results,
-                                          rnd=self.state,
-                                          role='Client #{}'.format(self.ID),
-                                          return_raw=True))
+            self._monitor.format_eval_res(
+                results,
+                rnd=self.state,
+                role="Client #{}".format(self.ID),
+                return_raw=True,
+            )
+        )
 
         # 获取模型参数并发送
         model_para = self.trainer.get_model_para()
         # print(model_para.keys())
 
         self.comm_manager.send(
-            Message(msg_type="model_para",
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, model_para)))
+            Message(
+                msg_type="model_para",
+                sender=self.ID,
+                receiver=[sender],
+                state=self.state,
+                content=(sample_size, model_para),
+            )
+        )
 
 
 # Register worker according to framework requirements
 def call_fedgs_worker(worker_type):
-    if worker_type == 'fedgs':
-        worker_builder = {'client': FedGSClient, 'server': FedGSServer}
+    if worker_type == "fedgs":
+        worker_builder = {"client": FedGSClient, "server": FedGSServer}
         return worker_builder
     return None
 
 
-register_worker('fedgs', call_fedgs_worker)
+register_worker("fedgs", call_fedgs_worker)

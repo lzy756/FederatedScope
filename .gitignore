@@ -141,3 +141,8 @@ dmypy.json
 data/
 
 exp/
+
+# FEDGS
+data_info.txt
+peer_communities.txt
+test_data_info.txt
