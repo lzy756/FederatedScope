@@ -95,74 +95,83 @@ class FedGSAggregator(ClientsAvgAggregator):
         # 获取第一个模型作为基准
         aggregated_model = copy.deepcopy(models[0]['model_para'])
 
-        # 对每一层独立进行共识最大化聚合
-        for layer_name in aggregated_model.keys():
-            # 检查所有客户端是否都有这一层
-            if not all(layer_name in model['model_para'] for model in models):
-                logger.warning(f"Layer {layer_name} not found in all client models, using weighted average")
-                # 如果某些客户端没有这一层，回退到加权平均
-                aggregated_model[layer_name] = self._weighted_average_layer(models, layer_name)
-                continue
+        # 将所有客户端的模型参数展平为单个向量
+        flattened_models = []
+        layer_shapes = {}
+        layer_order = list(aggregated_model.keys())
+        
+        for model in models:
+            flattened_params = []
+            for layer_name in layer_order:
+                if layer_name in model['model_para']:
+                    layer_param = model['model_para'][layer_name]
+                    if layer_name not in layer_shapes:
+                        layer_shapes[layer_name] = layer_param.shape
+                    flattened_params.append(layer_param.flatten())
+                else:
+                    logger.warning(f"Layer {layer_name} not found in client model, using zeros")
+                    if layer_name in layer_shapes:
+                        zero_param = torch.zeros(layer_shapes[layer_name]).flatten()
+                        flattened_params.append(zero_param)
+            
+            # 将所有层的参数连接成一个向量
+            full_model_vector = torch.cat(flattened_params)
+            flattened_models.append(full_model_vector)
 
-            # 提取所有客户端在这一层的参数更新
-            layer_updates = []
-            for model in models:
-                layer_param = model['model_para'][layer_name]
-                layer_updates.append(layer_param)
-
-            # 对这一层执行共识最大化聚合
-            aggregated_layer = self._consensus_maximization_layer(layer_updates)
-            aggregated_model[layer_name] = aggregated_layer
+        # 对整个模型向量执行共识最大化聚合
+        aggregated_vector = self._consensus_maximization_vector(flattened_models)
+        
+        # 将聚合后的向量拆分回各层
+        start_idx = 0
+        for layer_name in layer_order:
+            if layer_name in layer_shapes:
+                layer_shape = layer_shapes[layer_name]
+                layer_size = torch.prod(torch.tensor(layer_shape)).item()
+                layer_vector = aggregated_vector[start_idx:start_idx + layer_size]
+                aggregated_model[layer_name] = layer_vector.reshape(layer_shape)
+                start_idx += layer_size
 
         return aggregated_model
 
-    def _consensus_maximization_layer(self, layer_updates):
-        """对单层参数执行共识最大化聚合
+    def _consensus_maximization_vector(self, model_vectors):
+        """对整个模型向量执行共识最大化聚合
 
         Args:
-            layer_updates: 所有客户端在该层的参数更新列表
+            model_vectors: 所有客户端的模型向量列表
 
         Returns:
-            聚合后的层参数
+            聚合后的模型向量
         """
-        N = len(layer_updates)
+        N = len(model_vectors)
         if N == 1:
-            return layer_updates[0]
+            return model_vectors[0]
 
-        # 将参数展平为向量
-        flattened_updates = []
-        original_shape = layer_updates[0].shape
-
-        for update in layer_updates:
-            flattened_updates.append(update.flatten())
-
-        # 计算每个客户端更新的L2范数
+        # 计算每个客户端模型向量的L2范数
         norms = []
-        normalized_updates = []
+        normalized_vectors = []
 
-        for update in flattened_updates:
-            norm = torch.norm(update, p=2)
+        for vector in model_vectors:
+            norm = torch.norm(vector, p=2)
             norms.append(norm)
             if norm > 1e-8:  # 避免除零
-                normalized_updates.append(update / norm)
+                normalized_vectors.append(vector / norm)
             else:
-                normalized_updates.append(torch.zeros_like(update))
+                normalized_vectors.append(torch.zeros_like(vector))
 
-        # 计算平均范数 d̄_u^(l)
+        # 计算平均范数
         avg_norm = sum(norms) / N
 
-        # 求解优化问题：argmin_u ||∑_k u_k * d_{u,k}^(l)||_2^2
-        # 使用二次规划求解
-        weights = self._solve_consensus_weights(normalized_updates)
+        # 求解优化问题：argmin_u ||∑_k u_k * d_{u,k}||_2^2
+        weights = self._solve_consensus_weights(normalized_vectors)
 
-        # 计算最终的聚合更新
-        aggregated_update = torch.zeros_like(flattened_updates[0])
-        for i, (weight, norm_update) in enumerate(zip(weights, normalized_updates)):
-            aggregated_update += weight * norm_update
+        # 计算最终的聚合向量
+        aggregated_vector = torch.zeros_like(model_vectors[0])
+        for i, (weight, norm_vector) in enumerate(zip(weights, normalized_vectors)):
+            aggregated_vector += weight * norm_vector
 
-        # 乘以平均范数并恢复原始形状
-        final_update = avg_norm * aggregated_update
-        return final_update.reshape(original_shape)
+        # 乘以平均范数
+        final_vector = avg_norm * aggregated_vector
+        return final_vector
 
     def _solve_consensus_weights(self, normalized_updates):
         """求解共识权重优化问题
@@ -319,10 +328,10 @@ class FedGSAggregator(ClientsAvgAggregator):
                             # 计算最小的奇异值
                             min_sigma = torch.min(S).item()
 
-                            # 打印日志
-                            logger.info(
-                                f"[FedSAK] rank={rank_W}, minσ={min_sigma:.2e}, Σ1={S[0]:.2e}, Σ2={S[1]:.2e}, Σ3={S[2]:.2e}"
-                            )
+                            # # 打印日志
+                            # logger.info(
+                            #     f"[FedSAK] rank={rank_W}, minσ={min_sigma:.2e}, Σ1={S[0]:.2e}, Σ2={S[1]:.2e}, Σ3={S[2]:.2e}"
+                            # )
 
                             # 计算次梯度
                             grad = U @ Vh

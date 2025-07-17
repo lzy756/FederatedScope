@@ -87,10 +87,8 @@ class FedGSServer(Server):
         self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
-        self.L = config.fedgs.get("L", 5)  # Additional clients to select per round
-        self.n_batch_size = config.dataloader.get(
-            "batch_size", 32
-        )  # Batch size per client
+        self.L = config.fedgs.get("L", 25)  # Additional clients to select per round
+        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
@@ -387,71 +385,6 @@ class FedGSServer(Server):
             self.comm_manager.neighbors[message.sender] = message.content
         return super().callback_funcs_for_join_in(message)
 
-    def _sample_clients(self, group_id):
-        """Select clients based on sampling strategy
-
-        Args:
-            group_id: Group ID
-
-        Returns:
-            sampled_clients: List of sampled clients
-        """
-        group_clients = self.groups[group_id]
-        if not group_clients:
-            return []
-
-        if self.sampler == "uniform":  # Uniform sampling
-            return group_clients  # Return all clients in the group
-
-        elif self.sampler == "gbp-cs":  # Gradient-Based Priority with Client Selection
-            # Calculate weights for each client
-            weights = []
-            for client_id in group_clients:
-                if client_id not in self.client_weights:
-                    self.client_weights[client_id] = 1.0
-                weights.append(self.client_weights[client_id])
-
-            # Normalize weights
-            weights = np.array(weights)
-            if weights.sum() > 0:
-                weights = weights / weights.sum()
-            else:
-                weights = np.ones_like(weights) / len(weights)
-
-            # Sample clients based on weights, return all clients
-            return group_clients
-
-        else:  # Default return all clients
-            return group_clients
-
-    def _update_client_weights(self, round_idx, client_id, performance):
-        """Update client sampling weights
-
-        Args:
-            round_idx: Current round
-            client_id: Client ID
-            performance: Client performance metric
-        """
-        if self.sampler != "gbp-cs":
-            return
-
-        # Update client score
-        if client_id not in self.client_scores:
-            self.client_scores[client_id] = []
-        self.client_scores[client_id].append(performance)
-
-        # Calculate new weights
-        if len(self.client_scores[client_id]) > 1:
-            # Calculate performance improvement
-            prev_score = self.client_scores[client_id][-2]
-            curr_score = self.client_scores[client_id][-1]
-            improvement = curr_score - prev_score
-
-            # Update weights
-            self.client_weights[client_id] = max(
-                0.1,  # Minimum weight
-                self.client_weights.get(client_id, 1.0) + improvement,
-            )
 
     def broadcast_model_para(
         self, msg_type="model_para", sample_client_num=-1, filter_unseen_clients=True
@@ -1135,33 +1068,74 @@ class FedGSServer(Server):
             return {}
 
         # Set random seed for reproducible but different results per round
-        np.random.seed(
-            round_idx + 42
-        )  # Add offset to avoid collision with other random seeds
+        np.random.seed(round_idx + 42)
         random.seed(round_idx + 42)
 
         logger.info(
             f"Round {round_idx}: Selecting clients from clusters using template h = {self.h_vector}"
         )
 
-        # Select clients from each cluster based on the template
-        selected_clients_per_cluster = {}
-
+        # First pass: calculate actual selections and remaining quota
+        initial_selections = {}
+        remaining_quota = 0
+        
         for k, pc in enumerate(self.peer_communities):
             if not pc:  # Skip empty clusters
-                selected_clients_per_cluster[k] = []
+                initial_selections[k] = []
+                remaining_quota += int(round(self.h_vector[k]))
                 continue
 
             num_to_select = int(round(self.h_vector[k]))
             if num_to_select <= 0:
+                initial_selections[k] = []
+                continue
+
+            # Check if cluster has enough clients
+            available_clients = min(num_to_select, len(pc))
+            initial_selections[k] = available_clients
+        
+            # Add unused quota to remaining
+            remaining_quota += (num_to_select - available_clients)
+
+        # Second pass: redistribute remaining quota to clusters with available clients
+        clusters_with_capacity = []
+        for k, pc in enumerate(self.peer_communities):
+            if pc and initial_selections[k] < len(pc):
+                capacity = len(pc) - initial_selections[k]
+                clusters_with_capacity.append((k, capacity))
+    
+        # Distribute remaining quota
+        while remaining_quota > 0 and clusters_with_capacity:
+            # Sort by capacity (descending) to prioritize clusters with more available clients
+            clusters_with_capacity.sort(key=lambda x: x[1], reverse=True)
+            
+            for i, (k, capacity) in enumerate(clusters_with_capacity):
+                if remaining_quota <= 0:
+                    break
+                
+                # Add one more client to this cluster
+                initial_selections[k] += 1
+                remaining_quota -= 1
+            
+                # Update capacity
+                new_capacity = capacity - 1
+                if new_capacity > 0:
+                    clusters_with_capacity[i] = (k, new_capacity)
+                else:
+                    clusters_with_capacity.pop(i)
+                    break
+
+        # Final selection based on adjusted quotas
+        selected_clients_per_cluster = {}
+        for k, pc in enumerate(self.peer_communities):
+            if not pc or initial_selections[k] <= 0:
                 selected_clients_per_cluster[k] = []
                 continue
 
-            # Ensure we don't select more than available
-            num_to_select = min(num_to_select, len(pc))
-
+            num_to_select = initial_selections[k]
+            
             # Random selection from this cluster
-            if num_to_select == len(pc):
+            if num_to_select >= len(pc):
                 selected = list(pc)
             else:
                 selected = random.sample(list(pc), num_to_select)
@@ -1180,30 +1154,13 @@ class FedGSServer(Server):
             total_selected += len(clients)
             all_selected_clients.extend(clients)
 
-            if clients:  # Log distribution if cluster has selected clients
-                cluster_dist = self._get_distribution(clients)
-                logger.info(f"Cluster #{k + 1} data distribution:")
-                for label, percentage in sorted(cluster_dist.items()):
-                    logger.info(f"  Class {label}: {percentage*100:.2f}%")
-
-        # Calculate overall distribution and L2 difference from target
-        if all_selected_clients:
-            overall_dist = self._get_distribution(all_selected_clients)
-            logger.info(f"Overall selected clients data distribution:")
-            for label, percentage in sorted(overall_dist.items()):
-                logger.info(f"  Class {label}: {percentage*100:.2f}%")
-
-            # Calculate L2 difference from target for overall distribution
-            overall_dist_array = np.array(
-                [overall_dist.get(str(i), 0) for i in range(self.num_classes)]
-            )
-            overall_diff = np.linalg.norm(overall_dist_array - self.target_distribution)
-            logger.info(
-                f"Overall L2 difference from target distribution: {overall_diff:.4f}"
-            )
-
+        # Calculate expected total
+        expected_total = self.L + len(self.peer_communities)
         logger.info(f"Total clients selected across all clusters: {total_selected}")
-        logger.info(f"Expected total (L + K): {self.L + len(self.peer_communities)}")
+        logger.info(f"Expected total (L + K): {expected_total}")
+        
+        if total_selected != expected_total:
+            logger.warning(f"Selection mismatch: selected {total_selected}, expected {expected_total}")
 
         return selected_clients_per_cluster
 
