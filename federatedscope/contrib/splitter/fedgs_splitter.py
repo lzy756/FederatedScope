@@ -318,15 +318,36 @@ class FedGS_Splitter(BaseSplitter):
         logger.info(
             "Searching for optimal distance threshold with balance consideration..."
         )
+        from sklearn import __version__ as sklearn_version
+
+        def parse_version(version_str):
+            parts = []
+            for part in version_str.split("."):
+                num_part = "".join(
+                    filter(str.isdigit, part)
+                )  # 提取数字部分（如 "1.4.0" -> [1,4,0]）
+                if num_part:
+                    parts.append(int(num_part))
+            return tuple(parts)
+
+        use_metric = parse_version(sklearn_version) >= (1, 4)
 
         for threshold in threshold_candidates:
             try:
-                clustering = AgglomerativeClustering(
-                    n_clusters=None,
-                    distance_threshold=threshold,
-                    metric="precomputed",
-                    linkage="complete",
-                )
+                if not use_metric:
+                    clustering = AgglomerativeClustering(
+                        n_clusters=None,
+                        distance_threshold=threshold,
+                        affinity="precomputed",
+                        linkage="complete",
+                    )
+                else:
+                    clustering = AgglomerativeClustering(
+                        n_clusters=None,
+                        distance_threshold=threshold,
+                        metric="precomputed",
+                        linkage="complete",
+                    )
                 cluster_labels = clustering.fit_predict(distance_matrix)
 
                 # 计算当前聚类结果的综合评分
@@ -347,24 +368,12 @@ class FedGS_Splitter(BaseSplitter):
                     )
 
             except Exception as e:
-                logger.debug(f"Failed at threshold {threshold:.4f}: {e}")
+                logger.info(f"Failed at threshold {threshold:.4f}: {e}")
                 continue
         if best_labels is None:
             # 如果没找到合适的阈值，强制聚成指定数量的簇
             target_clusters = max(min(n_clients, self.max_groups), self.min_groups)
-            from sklearn import __version__ as sklearn_version
 
-            def parse_version(version_str):
-                parts = []
-                for part in version_str.split("."):
-                    num_part = "".join(
-                        filter(str.isdigit, part)
-                    )  # 提取数字部分（如 "1.4.0" -> [1,4,0]）
-                    if num_part:
-                        parts.append(int(num_part))
-                return tuple(parts)
-
-            use_metric = parse_version(sklearn_version) >= (1, 4)
             if not use_metric:
                 clustering = AgglomerativeClustering(
                     n_clusters=target_clusters,
