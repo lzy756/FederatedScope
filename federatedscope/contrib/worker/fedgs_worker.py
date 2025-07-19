@@ -63,9 +63,8 @@ class FedGSServer(Server):
         )
 
         # FedGS specific parameters
-        self.num_groups = (
-            config.fedgs.num_groups
-        )  # K: Number of peer communities (clusters)
+        self.num_groups = config.fedgs.num_groups
+        # K: Number of peer communities (clusters)
 
         # FedSAK specific parameters
         self.agg_lmbda = config.aggregator.get("lambda_", 1e-3)  # FedSAK的lambda参数
@@ -88,7 +87,9 @@ class FedGSServer(Server):
 
         # Template solving parameters
         self.L = config.fedgs.get("L", 25)  # Additional clients to select per round
-        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
+        self.n_batch_size = config.dataloader.get(
+            "batch_size", 32
+        )  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
@@ -384,7 +385,6 @@ class FedGSServer(Server):
         if message.sender not in self.comm_manager.neighbors:
             self.comm_manager.neighbors[message.sender] = message.content
         return super().callback_funcs_for_join_in(message)
-
 
     def broadcast_model_para(
         self, msg_type="model_para", sample_client_num=-1, filter_unseen_clients=True
@@ -1078,7 +1078,7 @@ class FedGSServer(Server):
         # First pass: calculate actual selections and remaining quota
         initial_selections = {}
         remaining_quota = 0
-        
+
         for k, pc in enumerate(self.peer_communities):
             if not pc:  # Skip empty clusters
                 initial_selections[k] = []
@@ -1093,9 +1093,9 @@ class FedGSServer(Server):
             # Check if cluster has enough clients
             available_clients = min(num_to_select, len(pc))
             initial_selections[k] = available_clients
-        
+
             # Add unused quota to remaining
-            remaining_quota += (num_to_select - available_clients)
+            remaining_quota += num_to_select - available_clients
 
         # Second pass: redistribute remaining quota to clusters with available clients
         clusters_with_capacity = []
@@ -1103,20 +1103,20 @@ class FedGSServer(Server):
             if pc and initial_selections[k] < len(pc):
                 capacity = len(pc) - initial_selections[k]
                 clusters_with_capacity.append((k, capacity))
-    
+
         # Distribute remaining quota
         while remaining_quota > 0 and clusters_with_capacity:
             # Sort by capacity (descending) to prioritize clusters with more available clients
             clusters_with_capacity.sort(key=lambda x: x[1], reverse=True)
-            
+
             for i, (k, capacity) in enumerate(clusters_with_capacity):
                 if remaining_quota <= 0:
                     break
-                
+
                 # Add one more client to this cluster
                 initial_selections[k] += 1
                 remaining_quota -= 1
-            
+
                 # Update capacity
                 new_capacity = capacity - 1
                 if new_capacity > 0:
@@ -1133,7 +1133,7 @@ class FedGSServer(Server):
                 continue
 
             num_to_select = initial_selections[k]
-            
+
             # Random selection from this cluster
             if num_to_select >= len(pc):
                 selected = list(pc)
@@ -1158,9 +1158,11 @@ class FedGSServer(Server):
         expected_total = self.L + len(self.peer_communities)
         logger.info(f"Total clients selected across all clusters: {total_selected}")
         logger.info(f"Expected total (L + K): {expected_total}")
-        
+
         if total_selected != expected_total:
-            logger.warning(f"Selection mismatch: selected {total_selected}, expected {expected_total}")
+            logger.warning(
+                f"Selection mismatch: selected {total_selected}, expected {expected_total}"
+            )
 
         return selected_clients_per_cluster
 

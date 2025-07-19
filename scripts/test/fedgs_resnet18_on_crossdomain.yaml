@@ -10,11 +10,10 @@ federate:
   method: fedgs
 data:
   root: data/
-  type: 'cross_domain'
-  splitter: 'fedgs'
+  type: cross_domain
   consistent_label_distribution: False
 dataloader:
-  batch_size: 10
+  batch_size: 32
 model:
   type: resnet18
   in_channels: 1
