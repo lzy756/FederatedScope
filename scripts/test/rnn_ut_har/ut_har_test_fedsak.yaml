@@ -1,0 +1,52 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  client_num: 25
+  method: fedsak
+  mode: standalone
+  total_round_num: 500
+  sample_client_rate: 0.2
+data:
+  root: data/
+  type: ut_har_test
+  splitter: lda
+  splitter_args: [{'alpha': 0.2}]
+aggregator:
+  lambda_: 0.1
+  lr_shared: 0.05
+  filter_keys:
+  - rnn.weight
+  - rnn.bias
+  - fc.weight
+  - fc.bias
+trainer:
+  type: fedsak
+fedsak:
+  share_patterns:
+    - rnn.weight
+    - rnn.bias
+    - fc.weight
+    - fc.bias
+dataloader:
+  batch_size: 32
+model:
+  type: rnn
+  out_channels: 7
+train:
+  local_update_steps: 5
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 0.0005
+    weight_decay: 0.01 
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'loss']
+  best_res_update_round_wise_key: test_loss

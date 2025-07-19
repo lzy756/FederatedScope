@@ -14,7 +14,8 @@ data:
   type: ut_har
   splitter: fedgs
   splitter_args: [{
-    'alpha': 0.2
+    'alpha': 0.5,
+    'distance_threshold': 0.5
   }]
 dataloader:
   batch_size: 32
@@ -37,7 +38,7 @@ eval:
   metrics: ['acc', 'loss']
   best_res_update_round_wise_key: test_loss
 fedgs:
-  num_groups: 3
+  S: 25
 aggregator:
   lambda_: 0.1
   lr_shared: 0.05

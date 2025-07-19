@@ -1,0 +1,40 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  mode: standalone
+  total_round_num: 60
+  sample_client_rate: 1
+  client_num: 100
+  method: fedprox
+data:
+  root: data/
+  type: 'cross_domain'
+  splitter : lda
+  splitter_args: [{'alpha': 0.1}]
+  consistent_label_distribution: False
+dataloader:
+  batch_size: 10
+model:
+  type: resnet18
+  in_channels: 1
+  out_channels: 10
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
+fedprox:
+  use: True
+  mu: 0.5

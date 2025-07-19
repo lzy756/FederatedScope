@@ -62,10 +62,6 @@ class FedGSServer(Server):
             **kwargs,
         )
 
-        # FedGS specific parameters
-        self.num_groups = config.fedgs.num_groups
-        # K: Number of peer communities (clusters)
-
         # FedSAK specific parameters
         self.agg_lmbda = config.aggregator.get("lambda_", 1e-3)  # FedSAK的lambda参数
         self.share_patterns = config.fedsak.share_patterns  # 共享层配置
@@ -86,44 +82,23 @@ class FedGSServer(Server):
         self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
-        self.L = config.fedgs.get("L", 25)  # Additional clients to select per round
-        self.n_batch_size = config.dataloader.get(
-            "batch_size", 32
-        )  # Batch size per client
+        self.S = config.fedgs.get("S", 25)  # Total clients to select per round
+        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
         self.template_solved = False  # Flag to indicate if template is solved
 
-        # Group related
-        self.groups = [
-            [] for _ in range(self.num_groups)
-        ]  # Store clients in each group
-        self.client_groups = {}  # Record which group each client belongs to
-
-        # Performance tracking
-        self.client_weights = {}  # Store client sampling weights
-        self.client_scores = {}  # Store client performance scores
-
-        # Grouping state
-        self.is_grouped = False
-        self.is_cc_formed = False
-
-        # Store group models after intra-group aggregation
-        self.group_models = {}
-
         # Load data and initialize
         if not self._initialize_communities():
             raise ValueError("Failed to initialize communities")
 
-        # Initialize groups
-        self._initialize_groups()
-
-        # Load saved grouping information
-        if not self._load_saved_groups():
-            raise ValueError(
-                "Cannot find or load grouping information file peer_communities.txt"
-            )
+        # Adjust S if necessary: if S < K, set S = K + 5
+        K = len(self.peer_communities) if self.peer_communities else 0
+        if self.S < K:
+            old_S = self.S
+            self.S = K + 5
+            logger.info(f"Adjusted S from {old_S} to {self.S} (K={K}, S must be >= K)")
 
     def _initialize_communities(self):
         """Initialize communities and related data"""
@@ -241,134 +216,6 @@ class FedGSServer(Server):
         except Exception as e:
             logger.error(f"Error loading PC information: {str(e)}")
             return False
-
-    def _initialize_groups(self):
-        """Initialize groups, assign clients to groups"""
-        if not self.is_cc_formed:
-            logger.warning(
-                "CC not constructed, using simple round-robin grouping strategy"
-            )
-            # Use simple round-robin strategy to assign clients to groups
-            all_clients = list(range(self.client_num))
-            for i, client_id in enumerate(all_clients):
-                group_id = i % self.num_groups
-                self.groups[group_id].append(client_id)
-                self.client_groups[client_id] = group_id
-        else:
-            # CC-based grouping strategy
-            for cc_idx, cc_clients in enumerate(self.ccs):
-                if not cc_clients:  # Skip empty CC
-                    continue
-                # Assign clients in CC to corresponding group
-                group_id = cc_idx % self.num_groups
-                for client_id in cc_clients:
-                    self.groups[group_id].append(client_id)
-                    self.client_groups[client_id] = group_id
-
-        # Output grouping information
-        logger.info("Client grouping completed:")
-        for group_id, clients in enumerate(self.groups):
-            logger.info(f"Group #{group_id + 1}: {len(clients)} clients - {clients}")
-
-        self.is_grouped = True
-
-    def _load_saved_groups(self):
-        """Load saved grouping information and data distribution information"""
-        peer_communities_path = "peer_communities.txt"
-        data_info_path = "data_info.txt"
-
-        # First load data distribution information
-        if os.path.exists(data_info_path):
-            try:
-                with open(data_info_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    # Find JSON data section
-                    json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                        "\nRaw Data (JSON format):\n"
-                    )
-                    json_data = json.loads(content[json_start:])
-
-                    # Update client data distribution information
-                    self.client_data_dist = {}
-                    for client_id, dist in enumerate(json_data["data_info"]):
-                        self.client_data_dist[str(client_id)] = {
-                            str(label): count for label, count in enumerate(dist)
-                        }
-
-                    # Calculate global data distribution
-                    self._calculate_global_distribution()
-
-            except Exception as e:
-                logger.warning(f"Error loading data distribution information: {str(e)}")
-                return False
-        else:
-            logger.warning(
-                f"Data distribution information file {data_info_path} does not exist"
-            )
-            return False
-
-        # Then load grouping information
-        if os.path.exists(peer_communities_path):
-            try:
-                with open(peer_communities_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    # Find JSON data section
-                    json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                        "\nRaw Data (JSON format):\n"
-                    )
-                    json_data = json.loads(content[json_start:])
-                    communities = json_data["peer_communities"]
-
-                    # Update grouping information
-                    self.groups = communities
-                    self.client_groups = {}
-                    for group_id, clients in enumerate(communities):
-                        for client_id in clients:
-                            self.client_groups[client_id] = group_id
-
-                    self.is_grouped = True
-                    logger.info(f"Loaded grouping information from file:")
-                    for group_id, clients in enumerate(self.groups):
-                        logger.info(
-                            f"Community #{group_id + 1}: {len(clients)} clients - {clients}"
-                        )
-
-                    # Template will be solved in _solve_template_once()
-
-                    return True
-            except Exception as e:
-                logger.warning(f"Error loading grouping information: {str(e)}")
-                return False
-        else:
-            logger.warning(
-                f"Grouping information file {peer_communities_path} does not exist"
-            )
-            return False
-
-    def _calculate_global_distribution(self):
-        """Calculate global data distribution"""
-        if not self.client_data_dist:
-            return
-
-        # Initialize global distribution
-        total_samples = 0
-        self.global_data_dist = {}
-
-        # Accumulate data from all clients
-        for client_dist in self.client_data_dist.values():
-            for label, count in client_dist.items():
-                if label not in self.global_data_dist:
-                    self.global_data_dist[label] = 0
-                self.global_data_dist[label] += count
-                total_samples += count
-
-        # Convert to percentages
-        for label in self.global_data_dist:
-            self.global_data_dist[label] /= total_samples
-
-        logger.info("Global data distribution calculation completed:")
-        for label, percentage in sorted(self.global_data_dist.items()):
-            logger.info(f"Class {label}: {percentage*100:.2f}%")
 
     def _register_default_handlers(self):
         """Register message processing functions"""
@@ -501,66 +348,6 @@ class FedGSServer(Server):
 
         logger.info("Server: Finished model broadcasting")
 
-    def _select_clients_for_cc(self, pc_clients, target_size):
-        """Select clients from PC to form CC based on sample counts
-
-        Args:
-            pc_clients: List of clients in PC
-            target_size: Number of clients to select
-
-        Returns:
-            selected_clients: List of selected clients
-        """
-        if not pc_clients:
-            return []
-
-        logger.info(f"Selecting {target_size} clients from PC")
-        logger.info(f"Available clients: {pc_clients}")
-
-        # Get target sample counts based on target distribution
-        total_target_samples = sum(self._get_raw_distribution(pc_clients).values())
-        target_samples = {
-            str(i): total_target_samples * ratio
-            for i, ratio in enumerate(self.target_distribution)
-        }
-
-        # Calculate per-client sample counts
-        client_samples = {}
-        for client_id in pc_clients:
-            if str(client_id) in self.client_data_dist:
-                client_samples[client_id] = self.client_data_dist[str(client_id)]
-
-        # Add random noise to client selection
-        noise_scale = 0.1  # Scale of random noise
-        client_scores = {}
-        for client_id in pc_clients:
-            if client_id in client_samples:
-                # Calculate base score based on distribution similarity
-                dist = client_samples[client_id]
-                total = sum(dist.values())
-                normalized_dist = {k: v / total for k, v in dist.items()}
-
-                # Calculate difference from target
-                diff = 0
-                for label in range(self.num_classes):
-                    target = self.target_distribution[label]
-                    current = normalized_dist.get(str(label), 0)
-                    diff += abs(current - target)
-
-                # Add random noise
-                noise = np.random.normal(0, noise_scale)
-                client_scores[client_id] = -diff + noise
-
-        # Sort clients by score and select top-k
-        sorted_clients = sorted(client_scores.items(), key=lambda x: x[1], reverse=True)
-        selected_clients = [client_id for client_id, _ in sorted_clients[:target_size]]
-
-        # Shuffle selected clients to add more randomness
-        random.shuffle(selected_clients)
-
-        logger.info(f"Selected clients: {selected_clients}")
-        return selected_clients
-
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters from clients"""
         round, sender, content = message.state, message.sender, message.content
@@ -598,7 +385,7 @@ class FedGSServer(Server):
             "Server: All selected clients have responded, starting two-layer aggregation"
         )
 
-        # First step: Intra-cluster aggregation using FedAvg
+        # First step: Intra-cluster aggregation using Consensus Maximization
         cluster_models = {}
         for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
             if not cluster_clients:  # Skip empty clusters
@@ -623,9 +410,9 @@ class FedGSServer(Server):
 
             if cluster_feedback:
                 logger.info(
-                    f"Server: Performing intra-cluster FedAvg aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients"
+                    f"Server: Performing intra-cluster Consensus Maximization aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients"
                 )
-                # Use FedAvg for intra-cluster aggregation
+                # Use Consensus Maximization for intra-cluster aggregation
                 result = self.aggregator.aggregate_intra_group(cluster_feedback)
                 cluster_models[cluster_idx] = {
                     "model": result,
@@ -868,10 +655,9 @@ class FedGSServer(Server):
                     p_ck_f = class_samples / total_samples if total_samples > 0 else 0
                     self.A_matrix[f, k] = n_ck * p_ck_f
 
-            # Build vector M: M = n(L+K) * P^{tar}
-            total_clients_selected = (
-                self.L + K
-            )  # L additional + K (at least one per cluster)
+            # Build vector M: M = n*S * P^{tar}
+            # S is the total number of clients to select per round
+            total_clients_selected = self.S
             self.M_vector = (
                 self.n_batch_size * total_clients_selected * self.target_distribution
             )
@@ -879,7 +665,10 @@ class FedGSServer(Server):
             logger.info(f"Matrix A shape: {self.A_matrix.shape}")
             logger.info(f"Vector M shape: {self.M_vector.shape}")
             logger.info(f"Upper bounds B: {self.B_vector}")
+            logger.info(f"Total clusters K: {K}")
+            logger.info(f"Total clients to select S: {self.S}")
             logger.info(f"Target total clients: {total_clients_selected}")
+            logger.info(f"Additional clients beyond mandatory (S-K): {self.S - K}")
 
             return True
 
@@ -960,12 +749,13 @@ class FedGSServer(Server):
 
             model.setObjective(obj, GRB.MINIMIZE)
 
-            # Constraint: sum(T*b) = L
+            # Constraint: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
+            additional_clients = self.S - K
             constraint_expr = gp.LinExpr()
             for i in range(K):
                 for j in range(total_binary_vars):
                     constraint_expr += T_matrix[i, j] * b_vars[j]
-            model.addConstr(constraint_expr == self.L, "sum_constraint")
+            model.addConstr(constraint_expr == additional_clients, "sum_constraint")
 
             # Solve
             model.optimize()
@@ -1026,13 +816,14 @@ class FedGSServer(Server):
                 prob += aux_vars[f] >= expr
                 prob += aux_vars[f] >= -expr
 
-            # Constraint: sum(T*b) = L
+            # Constraint: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
+            additional_clients = self.S - K
             constraint_expr = lpSum(
                 T_matrix[i, j] * b_vars[j]
                 for i in range(K)
                 for j in range(total_binary_vars)
             )
-            prob += constraint_expr == self.L
+            prob += constraint_expr == additional_clients
 
             # Solve
             prob.solve()
@@ -1155,10 +946,10 @@ class FedGSServer(Server):
             all_selected_clients.extend(clients)
 
         # Calculate expected total
-        expected_total = self.L + len(self.peer_communities)
+        expected_total = self.S  # S is the total number of clients to select
         logger.info(f"Total clients selected across all clusters: {total_selected}")
-        logger.info(f"Expected total (L + K): {expected_total}")
-
+        logger.info(f"Expected total (S): {expected_total}")
+        
         if total_selected != expected_total:
             logger.warning(
                 f"Selection mismatch: selected {total_selected}, expected {expected_total}"
@@ -1190,30 +981,6 @@ class FedGSServer(Server):
                 if label not in distribution:
                     distribution[label] = 0
                 distribution[label] += count
-
-        return distribution
-
-    def _get_distribution(self, client_ids):
-        """Calculate normalized distribution for given client set
-
-        Args:
-            client_ids: List of client IDs
-
-        Returns:
-            distribution: Data distribution dictionary, key is class, value is normalized ratio
-        """
-        if not client_ids:
-            return {}
-
-        # Get raw counts first
-        raw_dist = self._get_raw_distribution(client_ids)
-        total_samples = sum(raw_dist.values())
-
-        # Convert to normalized distribution
-        distribution = {}
-        if total_samples > 0:
-            for label, count in raw_dist.items():
-                distribution[label] = count / total_samples
 
         return distribution
 

@@ -16,7 +16,7 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedgs = CN()
 
     # 基本配置
-    cfg.fedgs.num_groups = 10  # 分组数量
+    cfg.fedgs.S = 25
 
     # ---------------------------------------------------------------------- #
     # fedopt related options, a general fl algorithm

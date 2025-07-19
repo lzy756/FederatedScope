@@ -4,45 +4,23 @@ early_stop:
   patience: 0
 seed: 12345
 federate:
+  client_num: 100
+  method: fedsak
   mode: standalone
   total_round_num: 60
-  client_num: 25
-  method: fedgs
+  sample_client_rate: 0.25
 data:
-  type: FashionMNIST@torchvision
-  splits: [0.6,0.2,0.2]
-  subsample: 1.0
-  transform: [['ToTensor'], ['Normalize', {'mean': [0.9637], 'std': [0.1592]}]]
-  splitter: fedgs
+  root: data/
+  type: 'cross_domain'
+  consistent_label_distribution: False
+  splitter : lda
   splitter_args: [{
-    'alpha': 0.1,
-    'distance_threshold': 0.5
+    'alpha': 0.5
   }]
-dataloader:
-  batch_size: 10
-model:
-  type: resnet18
-  in_channels: 1
-  out_channels: 10
-train:
-  local_update_steps: 1
-  batch_or_epoch: epoch
-  optimizer:
-    lr: 0.01
-    weight_decay: 0.0
-grad:
-  grad_clip: 5.0
-criterion:
-  type: CrossEntropyLoss
-eval:
-  freq: 1
-  metrics: ['acc', 'correct']
-fedgs:
-  S: 25
 aggregator:
   lambda_: 2
   lr_shared: 0.05
-  filter_keys:                 
+  filter_keys:
   - layer1.0.conv1.weight
   - layer1.0.bn1.weight
   - layer1.0.bn1.bias
@@ -102,7 +80,7 @@ aggregator:
   - layer4.1.bn2.bias
   - linear.weight
   - linear.bias
-fedsak:               
+fedsak:
   share_patterns:
   - layer1.0.conv1.weight
   - layer1.0.bn1.weight
@@ -165,3 +143,23 @@ fedsak:
   - linear.bias
 trainer:
   type: fedsak
+dataloader:
+  batch_size: 10
+model:
+  type: resnet18
+  in_channels: 1
+  out_channels: 10
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss

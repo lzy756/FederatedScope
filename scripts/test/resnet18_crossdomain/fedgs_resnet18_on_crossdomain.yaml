@@ -10,8 +10,12 @@ federate:
   method: fedgs
 data:
   root: data/
-  type: cross_domain
+  type: 'cross_domain'
   consistent_label_distribution: False
+  splitter : lda
+  splitter_args: [{
+    'alpha': 0.1
+  }]
 dataloader:
   batch_size: 32
 model:
@@ -33,7 +37,7 @@ eval:
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
 fedgs:
-  num_groups: 3
+  S: 25
 aggregator:
   lambda_: 2
   lr_shared: 0.05

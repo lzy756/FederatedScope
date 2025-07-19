@@ -18,7 +18,6 @@ class FedGSAggregator(ClientsAvgAggregator):
     """
     def __init__(self, model=None, device='cpu', config=None):
         super().__init__(model, device, config)
-        self.num_groups = config.fedgs.num_groups
 
         # FedSAK specific parameters
         self.lmbda = config.aggregator.get("lambda_", 1e-3)  # trace-norm正则化强度
