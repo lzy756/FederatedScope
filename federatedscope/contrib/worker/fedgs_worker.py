@@ -22,6 +22,7 @@ from federatedscope.core.workers.server import Server
 from federatedscope.core.workers.client import Client
 from federatedscope.core.auxiliaries.utils import merge_dict_of_results
 from federatedscope.register import register_worker
+from federatedscope.contrib.data.cross_domain_digits import load_cluster_results
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,16 @@ class FedGSServer(Server):
         self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
-        self.S = config.fedgs.get("S", 25)  # Total clients to select per round
+        self.S = config.federate.get("sample_client_num", 25)  # Total clients to select per round
         self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
         self.template_solved = False  # Flag to indicate if template is solved
 
-        # Load data and initialize
+        self._load_and_process_communities()
+
+        # compute the template vector h
         if not self._initialize_communities():
             raise ValueError("Failed to initialize communities")
 
@@ -102,9 +105,7 @@ class FedGSServer(Server):
 
     def _initialize_communities(self):
         """Initialize communities and related data"""
-        if not self._load_and_process_communities():
-            return False
-
+        
         # Calculate feature matrix P and target distribution
         if not self._calculate_features():
             return False
@@ -118,104 +119,55 @@ class FedGSServer(Server):
 
     def _load_and_process_communities(self):
         """Load PC information from file and process data distribution"""
-        peer_communities_path = "peer_communities.txt"
-        data_info_path = "data_info.txt"
-        test_data_path = "test_data_info.txt"
+        # peer_communities_path = "peer_communities.txt"
+        # data_info_path = "data_info.txt"
+        # test_data_path = "test_data_info.txt"
 
+        train_dists, test_dists, self.peer_communities = load_cluster_results("data/peer_communities.json")
         # Load test set distribution first (this will be our target)
-        if not os.path.exists(test_data_path):
-            logger.warning(
-                f"Test set distribution file {test_data_path} does not exist"
-            )
-            return False
 
-        try:
-            with open(test_data_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                    "\nRaw Data (JSON format):\n"
-                )
-                json_data = json.loads(content[json_start:])
+        test_dist = {}
+        total_samples = 0
 
-                # Calculate test set distribution
-                test_dist = {}
-                total_samples = 0
+        # Sum up all samples across clients
+        for client_dist in test_dists:
+            for label, count in enumerate(client_dist):
+                if str(label) not in test_dist:
+                    test_dist[str(label)] = 0
+                test_dist[str(label)] += count
+                total_samples += count
 
-                # Sum up all samples across clients
-                for client_dist in json_data["test_data_info"]:
-                    for label, count in enumerate(client_dist):
-                        if str(label) not in test_dist:
-                            test_dist[str(label)] = 0
-                        test_dist[str(label)] += count
-                        total_samples += count
+        # Set number of classes
+        self.num_classes = len(test_dists[0])
 
-                # Set number of classes
-                self.num_classes = len(json_data["test_data_info"][0])
+        # Normalize to get distribution
+        if total_samples > 0:
+            for label in test_dist:
+                test_dist[label] /= total_samples
 
-                # Normalize to get distribution
-                if total_samples > 0:
-                    for label in test_dist:
-                        test_dist[label] /= total_samples
-
-                # Store test distribution as target
-                self.target_distribution = test_dist
-                logger.info(f"Using test set distribution as target: {test_dist}")
-
-        except Exception as e:
-            logger.error(f"Error loading test set distribution: {str(e)}")
-            return False
+        # Store test distribution as target
+        self.target_distribution = test_dist
 
         # Load training data distribution
-        if not os.path.exists(data_info_path):
-            logger.warning(f"Data distribution file {data_info_path} does not exist")
-            return False
 
-        try:
-            with open(data_info_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                    "\nRaw Data (JSON format):\n"
-                )
-                json_data = json.loads(content[json_start:])
+        self.client_data_dist = {}
+        # Client start from 1, so enumerate starts from 1
+        for client_id, dist in enumerate(train_dists, start=1):
+            self.client_data_dist[str(client_id)] = {
+                str(label): count for label, count in enumerate(dist)
+            }
 
-                # Update client data distribution information
-                self.client_data_dist = {}
-                for client_id, dist in enumerate(json_data["data_info"]):
-                    self.client_data_dist[str(client_id)] = {
-                        str(label): count for label, count in enumerate(dist)
-                    }
+        logger.info(f"Using test set distribution as target: {test_dist}")
+        logger.info(
+            f"Loaded training data distribution for {len(self.client_data_dist)} clients"
+        )
+        logger.info(f"Loaded {len(self.peer_communities)} peer communities")
 
-                logger.info(
-                    f"Loaded training data distribution for {len(self.client_data_dist)} clients"
-                )
+        # 需要对peer_communities进行处理，每个用户的索引+1，因为客户端ID从1开始
+        if self.peer_communities:
+            for i, pc in enumerate(self.peer_communities):
+                self.peer_communities[i] = [cid + 1 for cid in pc]
 
-        except Exception as e:
-            logger.error(f"Error loading training data distribution: {str(e)}")
-            return False
-
-        # Load PC information
-        if not os.path.exists(peer_communities_path):
-            logger.warning(
-                f"PC information file {peer_communities_path} does not exist"
-            )
-            return False
-
-        try:
-            with open(peer_communities_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                    "\nRaw Data (JSON format):\n"
-                )
-                json_data = json.loads(content[json_start:])
-                self.peer_communities = json_data["peer_communities"]
-
-                logger.info(f"Loaded {len(self.peer_communities)} Peer Communities")
-
-                # Template will be solved in _solve_template_once()
-                return True
-        except Exception as e:
-            logger.error(f"Error loading PC information: {str(e)}")
-            return False
 
     def _register_default_handlers(self):
         """Register message processing functions"""
@@ -305,7 +257,7 @@ class FedGSServer(Server):
                 self.broadcast_model_para(msg_type="model_para")
             return
 
-        # Broadcast model parameters to all selected clients in all clusters
+         
         sampled_clients = []
         for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
             if cluster_clients:
@@ -321,7 +273,7 @@ class FedGSServer(Server):
         self.sample_client_ids = sampled_clients
 
         for client_id in sampled_clients:
-            if self.state == 0 or not hasattr(self, "personalized_slices"):
+            if self.state == 0 or not hasattr(self, "personalized_slices"): # 第一次训练或者没有个性化切片，则发送自身的模型
                 content = self.model.state_dict()
                 self.comm_manager.send(
                     Message(
@@ -442,7 +394,7 @@ class FedGSServer(Server):
                 self.personalized_slices = result["model_para_all"]
                 # 构建一个临时空字典
                 temp_personalized_slices = {}
-                # 将cluster模型复制到对应客户端
+                # 将cluster模型复制到对应客户端, 这里应该发送给所有客户端
                 for (
                     cluster_idx,
                     cluster_clients,
@@ -584,6 +536,8 @@ class FedGSServer(Server):
         logger.info("Feature calculation completed:")
         logger.info(f"Feature matrix P shape: {self.pc_features.shape}")
         logger.info("Average sample counts per client for each PC:")
+
+        # 优化下面输出数字的格式
         for k in range(len(self.peer_communities)):
             if self.peer_communities[k]:  # Only show non-empty PCs
                 logger.info(
@@ -618,8 +572,17 @@ class FedGSServer(Server):
             logger.error("Binary Split solving failed")
             return False
 
+        if not self._validate_solution(h_solution):
+            logger.error("Solution validation failed")
+            return False
+
+        # 在原有代码的模板求解完成后添加
+
         self.h_vector = h_solution
         self.template_solved = True
+
+        self.evaluate_template_solution()
+        
 
         logger.info(f"Template solved successfully: h = {self.h_vector}")
         return True
@@ -687,7 +650,7 @@ class FedGSServer(Server):
 
             for k in range(K):
                 B_k = int(self.B_vector[k])
-                G_k = math.ceil(math.log2(B_k + 1)) if B_k > 0 else 1
+                G_k = math.floor(math.log2(B_k)) + 1 if B_k > 0 else 1
                 G.append(G_k)
                 total_binary_vars += G_k
 
@@ -749,7 +712,7 @@ class FedGSServer(Server):
 
             model.setObjective(obj, GRB.MINIMIZE)
 
-            # Constraint: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
+            # Constraint 1: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
             additional_clients = self.S - K
             constraint_expr = gp.LinExpr()
             for i in range(K):
@@ -757,16 +720,36 @@ class FedGSServer(Server):
                     constraint_expr += T_matrix[i, j] * b_vars[j]
             model.addConstr(constraint_expr == additional_clients, "sum_constraint")
 
+            # Constraint 2: Each cluster's selection doesn't exceed its size
+            col_idx = 0
+            for i in range(K):
+                if self.peer_communities[i]:  # Only constrain non-empty clusters
+                    cluster_expr = gp.LinExpr()
+                    for j in range(G[i]):
+                        cluster_expr += T_matrix[i, col_idx] * b_vars[col_idx]
+                        col_idx += 1
+                    # z_i = T*b for cluster i, h_i = z_i + 1
+                    # Constraint: z_i <= B_i - 1
+                    model.addConstr(cluster_expr <= self.B_vector[i] - 1, f"cluster_{i}_max")
+                else:
+                    # Skip empty clusters (no variables)
+                    col_idx += G[i]
+
             # Solve
             model.optimize()
 
             if model.status == GRB.OPTIMAL:
                 # Extract solution
                 b_solution = np.array([b_vars[j].x for j in range(total_binary_vars)])
-                h_solution = T_matrix @ b_solution
-
+                z_solution = T_matrix @ b_solution  # Additional clients per cluster
+                
                 # Add the mandatory 1 client per cluster
-                h_solution = h_solution + 1
+                h_solution = z_solution + 1
+                
+                # Set empty clusters to 0
+                for i in range(K):
+                    if not self.peer_communities[i]:
+                        h_solution[i] = 0
 
                 logger.info(
                     f"Gurobi solved successfully with objective value: {model.objVal}"
@@ -816,7 +799,7 @@ class FedGSServer(Server):
                 prob += aux_vars[f] >= expr
                 prob += aux_vars[f] >= -expr
 
-            # Constraint: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
+            # Constraint 1: sum(T*b) = S - K (additional clients beyond mandatory 1 per cluster)
             additional_clients = self.S - K
             constraint_expr = lpSum(
                 T_matrix[i, j] * b_vars[j]
@@ -824,6 +807,22 @@ class FedGSServer(Server):
                 for j in range(total_binary_vars)
             )
             prob += constraint_expr == additional_clients
+
+            # Constraint 2: Each cluster's selection doesn't exceed its size
+            col_idx = 0
+            for i in range(K):
+                if self.peer_communities[i]:  # Only constrain non-empty clusters
+                    cluster_expr = lpSum(
+                        T_matrix[i, col_idx + j] * b_vars[col_idx + j]
+                        for j in range(G[i])
+                    )
+                    # z_i = T*b for cluster i, h_i = z_i + 1
+                    # Constraint: z_i <= B_i - 1
+                    prob += cluster_expr <= self.B_vector[i] - 1
+                    col_idx += G[i]
+                else:
+                    # Skip empty clusters
+                    col_idx += G[i]
 
             # Solve
             prob.solve()
@@ -833,10 +832,15 @@ class FedGSServer(Server):
                 b_solution = np.array(
                     [value(b_vars[j]) for j in range(total_binary_vars)]
                 )
-                h_solution = T_matrix @ b_solution
-
+                z_solution = T_matrix @ b_solution
+                
                 # Add the mandatory 1 client per cluster
-                h_solution = h_solution + 1
+                h_solution = z_solution + 1
+                
+                # Set empty clusters to 0
+                for i in range(K):
+                    if not self.peer_communities[i]:
+                        h_solution[i] = 0
 
                 logger.info(
                     f"PuLP solved successfully with objective value: {value(prob.objective)}"
@@ -851,6 +855,76 @@ class FedGSServer(Server):
         except Exception as e:
             logger.error(f"Error in PuLP solving: {str(e)}")
             return None
+    
+    def _validate_solution(self, h_solution):
+        for k in range(len(self.peer_communities)):
+            if self.peer_communities[k]:
+                if h_solution[k] < 1:
+                    return False
+                if h_solution[k] > self.B_vector[k]:
+                    return False
+        return True
+    
+    def evaluate_template_solution(self):
+        """
+        评估模板解决方案与目标之间的差异
+        
+        Returns:
+            dict: 包含多种差值指标的字典
+        """
+        if not hasattr(self, 'h_vector') or self.h_vector is None:
+            logger.error("Solution not calculated yet")
+            return
+        
+        try:
+            # 计算预测的特征向量
+            M_hat = self.A_matrix @ self.h_vector
+            
+            # 计算关键指标
+            diff_absolute = M_hat - self.M_vector
+            diff_relative = np.divide(diff_absolute, self.M_vector, 
+                                    out=np.zeros_like(diff_absolute), 
+                                    where=self.M_vector != 0)
+            max_abs_diff = np.max(np.abs(diff_absolute))
+            max_rel_diff = np.max(np.abs(diff_relative))
+            l2_norm = np.linalg.norm(diff_absolute)
+            l1_norm = np.sum(np.abs(diff_absolute))
+            
+            # 计算KL散度（作为概率分布比较）
+            epsilon = 1e-10  # 避免log(0)
+            target_dist_normalized = self.target_distribution / np.sum(self.target_distribution)
+            actual_dist = M_hat / np.sum(M_hat)
+            kl_divergence = np.sum(target_dist_normalized * np.log(target_dist_normalized / (actual_dist + epsilon) + epsilon))
+            
+            # 计算相对特征匹配分数
+            matched_features = np.sum(np.abs(diff_relative) < 0.05)  # 5%以内误差
+            feature_score = matched_features / self.num_classes
+            
+            # result = {
+            #     "predicted_features": M_hat,
+            #     "absolute_difference": diff_absolute,
+            #     "relative_difference": diff_relative,
+            #     "max_absolute_difference": max_abs_diff,
+            #     "max_relative_difference": max_rel_diff,
+            #     "l2_norm": l2_norm,
+            #     "l1_norm": l1_norm,
+            #     "kl_divergence": kl_divergence,
+            #     "feature_match_score": feature_score
+            # }
+            
+            # 记录关键指标
+            logger.info(f"Feature match score: {feature_score:.1%} ({matched_features}/{self.num_classes} features matched within 5% error)")
+            logger.info(f"Max absolute difference: {max_abs_diff:.4f}")
+            logger.info(f"L2 norm of differences: {l2_norm:.4f}")
+            logger.info(f"KL divergence: {kl_divergence:.4f}")
+            logger.info(f"Predicted features: {M_hat}")
+            logger.info(f"Target features: {self.M_vector}")
+            logger.info(f"Absolute difference: {diff_absolute}")
+            logger.info(f"Relative difference: {diff_relative}")    
+
+        except Exception as e:
+            logger.error(f"Failed to evaluate solution: {str(e)}")
+            return
 
     def _select_clients_from_clusters(self, round_idx):
         """Select clients from each cluster using pre-solved template h vector"""
@@ -859,101 +933,60 @@ class FedGSServer(Server):
             return {}
 
         # Set random seed for reproducible but different results per round
-        np.random.seed(round_idx + 42)
-        random.seed(round_idx + 42)
+        seed = self._cfg.get("seed", 42) + round_idx
+        np.random.seed(seed)
+        random.seed(seed)
 
         logger.info(
             f"Round {round_idx}: Selecting clients from clusters using template h = {self.h_vector}"
         )
 
-        # First pass: calculate actual selections and remaining quota
-        initial_selections = {}
-        remaining_quota = 0
-
-        for k, pc in enumerate(self.peer_communities):
-            if not pc:  # Skip empty clusters
-                initial_selections[k] = []
-                remaining_quota += int(round(self.h_vector[k]))
-                continue
-
-            num_to_select = int(round(self.h_vector[k]))
-            if num_to_select <= 0:
-                initial_selections[k] = []
-                continue
-
-            # Check if cluster has enough clients
-            available_clients = min(num_to_select, len(pc))
-            initial_selections[k] = available_clients
-
-            # Add unused quota to remaining
-            remaining_quota += num_to_select - available_clients
-
-        # Second pass: redistribute remaining quota to clusters with available clients
-        clusters_with_capacity = []
-        for k, pc in enumerate(self.peer_communities):
-            if pc and initial_selections[k] < len(pc):
-                capacity = len(pc) - initial_selections[k]
-                clusters_with_capacity.append((k, capacity))
-
-        # Distribute remaining quota
-        while remaining_quota > 0 and clusters_with_capacity:
-            # Sort by capacity (descending) to prioritize clusters with more available clients
-            clusters_with_capacity.sort(key=lambda x: x[1], reverse=True)
-
-            for i, (k, capacity) in enumerate(clusters_with_capacity):
-                if remaining_quota <= 0:
-                    break
-
-                # Add one more client to this cluster
-                initial_selections[k] += 1
-                remaining_quota -= 1
-
-                # Update capacity
-                new_capacity = capacity - 1
-                if new_capacity > 0:
-                    clusters_with_capacity[i] = (k, new_capacity)
-                else:
-                    clusters_with_capacity.pop(i)
-                    break
-
-        # Final selection based on adjusted quotas
+        # Prepare container for final selections
         selected_clients_per_cluster = {}
+        total_selected = 0
+
         for k, pc in enumerate(self.peer_communities):
-            if not pc or initial_selections[k] <= 0:
+            # Get number of clients to select from this cluster
+            num_to_select = int(round(self.h_vector[k]))
+            
+            if num_to_select <= 0:
                 selected_clients_per_cluster[k] = []
                 continue
+            
+            # Check if cluster has enough clients
+            if len(pc) < num_to_select:
+                logger.error(
+                    f"Cluster {k} has only {len(pc)} clients, "
+                    f"but {num_to_select} were requested"
+                )
+                raise ValueError(f"Not enough clients in cluster {k}")
 
-            num_to_select = initial_selections[k]
-
-            # Random selection from this cluster
-            if num_to_select >= len(pc):
-                selected = list(pc)
+            # Select the required number of clients
+            if num_to_select == len(pc):
+                selected = list(pc)  # Select all
             else:
                 selected = random.sample(list(pc), num_to_select)
-
+            
             selected_clients_per_cluster[k] = selected
+            total_selected += num_to_select
 
         # Log the results
         logger.info(
             f"Selected clients from {len(self.peer_communities)} clusters for round {round_idx}:"
         )
-        total_selected = 0
-        all_selected_clients = []
 
         for k, clients in selected_clients_per_cluster.items():
-            logger.info(f"Cluster #{k + 1}: {len(clients)} clients - {clients}")
-            total_selected += len(clients)
-            all_selected_clients.extend(clients)
+            logger.info(f"Cluster #{k}: {len(clients)} clients - {clients}")
 
-        # Calculate expected total
-        expected_total = self.S  # S is the total number of clients to select
-        logger.info(f"Total clients selected across all clusters: {total_selected}")
-        logger.info(f"Expected total (S): {expected_total}")
+        # Verify total selection count
+        expected_total = self.S
+        logger.info(f"Total clients selected: {total_selected} (expected: {expected_total})")
         
         if total_selected != expected_total:
-            logger.warning(
+            logger.error(
                 f"Selection mismatch: selected {total_selected}, expected {expected_total}"
             )
+            raise ValueError("Total selected clients does not match expected total")
 
         return selected_clients_per_cluster
 

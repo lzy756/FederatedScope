@@ -9,6 +9,7 @@ def extend_fl_algo_cfg(cfg):
     # ---------------------------------------------------------------------- #
     cfg.fedsak = CN()
     cfg.fedsak.share_patterns = []
+    cfg.fedsak.per_round = 10  # Number of rounds to perform FedSAK aggregation
 
     # ---------------------------------------------------------------------- #
     # FedGS related options
