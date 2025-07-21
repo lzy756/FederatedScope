@@ -13,6 +13,7 @@ class FedSAKAggregator(Aggregator):
     • 堆叠各客户端共享层 → 施加张量 trace‑norm 正则 → 次梯度更新
     • 返回个性化 slice 给对应客户端
     """
+
     def __init__(self, config):
         # super().__init__(config, model=model, device=device)
         self.lmbda = config.aggregator.get("lambda_", 1e-3)
@@ -20,8 +21,9 @@ class FedSAKAggregator(Aggregator):
         self.share_patterns = config.aggregator.get("filter_keys", [])
         self.cfg = config
 
-        logger.info("FedSAK Aggregator initialized with " +
-                    f"lambda={self.lmbda}, lr={self.lr}")
+        logger.info(
+            "FedSAK Aggregator initialized with " + f"lambda={self.lmbda}, lr={self.lr}"
+        )
         logger.info(f"Share patterns: {self.share_patterns}")
 
     def _para_weighted_avg(self, models, recover_fun=None):
@@ -72,19 +74,18 @@ class FedSAKAggregator(Aggregator):
         处理来自客户端的模型参数，执行trace-norm正则化
         """
         # 解析聚合信息
-        client_feedback = agg_info['client_feedback']
+        client_feedback = agg_info["client_feedback"]
 
         if self.lmbda == 0:
             models = []
             for feedback in client_feedback:
-                sample_size, model_para = feedback['model_para']
+                sample_size, model_para = feedback["model_para"]
                 models.append((sample_size, model_para))
             # 直接返回平均模型
             avg_model = self._para_weighted_avg(models)
             # 构建返回格式
             personalized = {
-                feedback['client_id']: avg_model
-                for feedback in client_feedback
+                feedback["client_id"]: avg_model for feedback in client_feedback
             }
             return {"model_para_all": personalized}
         else:
@@ -93,8 +94,8 @@ class FedSAKAggregator(Aggregator):
             model_params = []
 
             for feedback in client_feedback:
-                client_ids.append(feedback['client_id'])
-                sample_size, model_para = feedback['model_para']
+                client_ids.append(feedback["client_id"])
+                sample_size, model_para = feedback["model_para"]
                 # print(type(model_para),type(feedback['model_para']))
                 model_params.append(model_para)
 
@@ -107,16 +108,14 @@ class FedSAKAggregator(Aggregator):
                     # 查找匹配该模式的所有键
                     matching_keys = []
                     for params in model_params:
-                        matching_keys.extend(
-                            [k for k in params.keys() if pattern in k])
+                        matching_keys.extend([k for k in params.keys() if pattern in k])
                     # 去重
                     matching_keys = list(set(matching_keys))
                     # print(f"Matching keys for
                     # pattern '{pattern}': {matching_keys}")
 
                     if not matching_keys:
-                        logger.warning(
-                            f"No keys found matching pattern '{pattern}'")
+                        logger.warning(f"No keys found matching pattern '{pattern}'")
                         continue
 
                     # 处理每个匹配的键
@@ -124,13 +123,11 @@ class FedSAKAggregator(Aggregator):
                         # 检查所有客户端是否都有此键
                         if all(k in params for params in model_params):
                             # 提取形状信息
-                            shapes = [
-                                params[k].shape for params in model_params
-                            ]
+                            shapes = [params[k].shape for params in model_params]
                             # 堆叠参数矩阵
-                            W = torch.stack([
-                                params[k].flatten() for params in model_params
-                            ], 0)
+                            W = torch.stack(
+                                [params[k].flatten() for params in model_params], 0
+                            )
                             # 执行SVD分解
                             U, S, Vh = torch.linalg.svd(W, full_matrices=False)
 
@@ -155,24 +152,17 @@ class FedSAKAggregator(Aggregator):
                             W_new = W - self.lr * self.lmbda * grad
                             # 还原各客户端参数形状
                             for idx, slice_vec in enumerate(W_new):
-                                updated_dicts[idx][k] = slice_vec.reshape(
-                                    shapes[idx])
+                                updated_dicts[idx][k] = slice_vec.reshape(shapes[idx])
                         else:
-                            logger.warning(
-                                f"Key '{k}' not found in all client models")
+                            logger.warning(f"Key '{k}' not found in all client models")
                             # 保留原参数
                             for idx in range(n_client):
                                 if k in model_params[idx]:
-                                    updated_dicts[idx][k] = model_params[idx][
-                                        k]
+                                    updated_dicts[idx][k] = model_params[idx][k]
                 except Exception as e:
-                    logger.warning(
-                        f"Error processing pattern '{pattern}': {str(e)}")
+                    logger.warning(f"Error processing pattern '{pattern}': {str(e)}")
 
             # 构建返回格式
-            personalized = {
-                cid: state
-                for cid, state in zip(client_ids, updated_dicts)
-            }
+            personalized = {cid: state for cid, state in zip(client_ids, updated_dicts)}
 
             return {"model_para_all": personalized}

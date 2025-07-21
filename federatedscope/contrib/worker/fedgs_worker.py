@@ -83,8 +83,12 @@ class FedGSServer(Server):
         self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
-        self.S = config.federate.get("sample_client_num", 25)  # Total clients to select per round
-        self.n_batch_size = config.dataloader.get("batch_size", 32)  # Batch size per client
+        self.S = config.federate.get(
+            "sample_client_num", 25
+        )  # Total clients to select per round
+        self.n_batch_size = config.dataloader.get(
+            "batch_size", 32
+        )  # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
@@ -105,7 +109,7 @@ class FedGSServer(Server):
 
     def _initialize_communities(self):
         """Initialize communities and related data"""
-        
+
         # Calculate feature matrix P and target distribution
         if not self._calculate_features():
             return False
@@ -123,7 +127,9 @@ class FedGSServer(Server):
         # data_info_path = "data_info.txt"
         # test_data_path = "test_data_info.txt"
 
-        train_dists, test_dists, self.peer_communities = load_cluster_results("data/peer_communities.json")
+        train_dists, test_dists, self.peer_communities = load_cluster_results(
+            "data/peer_communities.json"
+        )
         # Load test set distribution first (this will be our target)
 
         test_dist = {}
@@ -168,7 +174,6 @@ class FedGSServer(Server):
             for i, pc in enumerate(self.peer_communities):
                 self.peer_communities[i] = [cid + 1 for cid in pc]
 
-
     def _register_default_handlers(self):
         """Register message processing functions"""
         super()._register_default_handlers()
@@ -204,6 +209,9 @@ class FedGSServer(Server):
                     and rcv_idx in self.personalized_slices
                 ):
                     content = self.personalized_slices[rcv_idx]
+                    logger.info(
+                        f"Sending personalized model to client {rcv_idx} for evaluation"
+                    )
                 else:
                     content = None
 
@@ -222,7 +230,7 @@ class FedGSServer(Server):
         if hasattr(self, "personalized_slices") and self.prev_sample_client_ids:
             for cid in self.prev_sample_client_ids:
                 if cid in self.personalized_slices:
-                    logger.debug(f"Send personalized slice to C{cid}")
+                    logger.info(f"Send personalized model to C{cid}")
                     # 使用新消息类型update_model，只更新模型不触发训练
                     self.comm_manager.send(
                         Message(
@@ -257,7 +265,6 @@ class FedGSServer(Server):
                 self.broadcast_model_para(msg_type="model_para")
             return
 
-         
         sampled_clients = []
         for cluster_idx, cluster_clients in self.selected_clients_per_cluster.items():
             if cluster_clients:
@@ -273,7 +280,9 @@ class FedGSServer(Server):
         self.sample_client_ids = sampled_clients
 
         for client_id in sampled_clients:
-            if self.state == 0 or not hasattr(self, "personalized_slices"): # 第一次训练或者没有个性化切片，则发送自身的模型
+            if self.state == 0 or not hasattr(
+                self, "personalized_slices"
+            ):  # 第一次训练或者没有个性化切片，则发送自身的模型
                 content = self.model.state_dict()
                 self.comm_manager.send(
                     Message(
@@ -388,7 +397,12 @@ class FedGSServer(Server):
 
             # Use FedSAK aggregation method for inter-cluster aggregation
             result = self.aggregator.aggregate_inter_group(cluster_feedback)
-
+            # result = {
+            #     "model_para_all": {
+            #         f"cluster_{cluster_idx}": cluster_info["model"]
+            #         for cluster_idx, cluster_info in cluster_models.items()
+            #     }
+            # }
             # 保存聚合结果作为个性化切片，下一轮使用
             if "model_para_all" in result:
                 self.personalized_slices = result["model_para_all"]
@@ -582,7 +596,6 @@ class FedGSServer(Server):
         self.template_solved = True
 
         self.evaluate_template_solution()
-        
 
         logger.info(f"Template solved successfully: h = {self.h_vector}")
         return True
@@ -610,13 +623,15 @@ class FedGSServer(Server):
                 total_samples = sum(pc_raw_dist.values()) if pc_raw_dist else 1
 
                 # Average samples per client in this cluster
-                n_ck = total_samples / len(pc) if len(pc) > 0 else 0
+                # n_ck = total_samples / len(pc) if len(pc) > 0 else 0
 
                 # Probability distribution for this cluster
                 for f in range(F):
                     class_samples = pc_raw_dist.get(str(f), 0)
                     p_ck_f = class_samples / total_samples if total_samples > 0 else 0
-                    self.A_matrix[f, k] = n_ck * p_ck_f
+                    # self.A_matrix[f, k] = n_ck * p_ck_f
+                    self.A_matrix[f, k] = self.n_batch_size * p_ck_f
+                    # 使用n_batch_size作为缩放因子
 
             # Build vector M: M = n*S * P^{tar}
             # S is the total number of clients to select per round
@@ -730,7 +745,9 @@ class FedGSServer(Server):
                         col_idx += 1
                     # z_i = T*b for cluster i, h_i = z_i + 1
                     # Constraint: z_i <= B_i - 1
-                    model.addConstr(cluster_expr <= self.B_vector[i] - 1, f"cluster_{i}_max")
+                    model.addConstr(
+                        cluster_expr <= self.B_vector[i] - 1, f"cluster_{i}_max"
+                    )
                 else:
                     # Skip empty clusters (no variables)
                     col_idx += G[i]
@@ -742,10 +759,10 @@ class FedGSServer(Server):
                 # Extract solution
                 b_solution = np.array([b_vars[j].x for j in range(total_binary_vars)])
                 z_solution = T_matrix @ b_solution  # Additional clients per cluster
-                
+
                 # Add the mandatory 1 client per cluster
                 h_solution = z_solution + 1
-                
+
                 # Set empty clusters to 0
                 for i in range(K):
                     if not self.peer_communities[i]:
@@ -833,10 +850,10 @@ class FedGSServer(Server):
                     [value(b_vars[j]) for j in range(total_binary_vars)]
                 )
                 z_solution = T_matrix @ b_solution
-                
+
                 # Add the mandatory 1 client per cluster
                 h_solution = z_solution + 1
-                
+
                 # Set empty clusters to 0
                 for i in range(K):
                     if not self.peer_communities[i]:
@@ -855,7 +872,7 @@ class FedGSServer(Server):
         except Exception as e:
             logger.error(f"Error in PuLP solving: {str(e)}")
             return None
-    
+
     def _validate_solution(self, h_solution):
         for k in range(len(self.peer_communities)):
             if self.peer_communities[k]:
@@ -864,63 +881,61 @@ class FedGSServer(Server):
                 if h_solution[k] > self.B_vector[k]:
                     return False
         return True
-    
+
     def evaluate_template_solution(self):
         """
         评估模板解决方案与目标之间的差异
-        
+
         Returns:
             dict: 包含多种差值指标的字典
         """
-        if not hasattr(self, 'h_vector') or self.h_vector is None:
+        if not hasattr(self, "h_vector") or self.h_vector is None:
             logger.error("Solution not calculated yet")
             return
-        
+
         try:
             # 计算预测的特征向量
             M_hat = self.A_matrix @ self.h_vector
-            
+
             # 计算关键指标
             diff_absolute = M_hat - self.M_vector
-            diff_relative = np.divide(diff_absolute, self.M_vector, 
-                                    out=np.zeros_like(diff_absolute), 
-                                    where=self.M_vector != 0)
+            diff_relative = np.divide(
+                diff_absolute,
+                self.M_vector,
+                out=np.zeros_like(diff_absolute),
+                where=self.M_vector != 0,
+            )
             max_abs_diff = np.max(np.abs(diff_absolute))
             max_rel_diff = np.max(np.abs(diff_relative))
             l2_norm = np.linalg.norm(diff_absolute)
             l1_norm = np.sum(np.abs(diff_absolute))
-            
+
             # 计算KL散度（作为概率分布比较）
             epsilon = 1e-10  # 避免log(0)
-            target_dist_normalized = self.target_distribution / np.sum(self.target_distribution)
+            target_dist_normalized = self.target_distribution / np.sum(
+                self.target_distribution
+            )
             actual_dist = M_hat / np.sum(M_hat)
-            kl_divergence = np.sum(target_dist_normalized * np.log(target_dist_normalized / (actual_dist + epsilon) + epsilon))
-            
+            kl_divergence = np.sum(
+                target_dist_normalized
+                * np.log(target_dist_normalized / (actual_dist + epsilon) + epsilon)
+            )
+
             # 计算相对特征匹配分数
             matched_features = np.sum(np.abs(diff_relative) < 0.05)  # 5%以内误差
             feature_score = matched_features / self.num_classes
-            
-            # result = {
-            #     "predicted_features": M_hat,
-            #     "absolute_difference": diff_absolute,
-            #     "relative_difference": diff_relative,
-            #     "max_absolute_difference": max_abs_diff,
-            #     "max_relative_difference": max_rel_diff,
-            #     "l2_norm": l2_norm,
-            #     "l1_norm": l1_norm,
-            #     "kl_divergence": kl_divergence,
-            #     "feature_match_score": feature_score
-            # }
-            
+
             # 记录关键指标
-            logger.info(f"Feature match score: {feature_score:.1%} ({matched_features}/{self.num_classes} features matched within 5% error)")
+            logger.info(
+                f"Feature match score: {feature_score:.1%} ({matched_features}/{self.num_classes} features matched within 5% error)"
+            )
             logger.info(f"Max absolute difference: {max_abs_diff:.4f}")
             logger.info(f"L2 norm of differences: {l2_norm:.4f}")
             logger.info(f"KL divergence: {kl_divergence:.4f}")
             logger.info(f"Predicted features: {M_hat}")
             logger.info(f"Target features: {self.M_vector}")
             logger.info(f"Absolute difference: {diff_absolute}")
-            logger.info(f"Relative difference: {diff_relative}")    
+            logger.info(f"Relative difference: {diff_relative}")
 
         except Exception as e:
             logger.error(f"Failed to evaluate solution: {str(e)}")
@@ -948,11 +963,11 @@ class FedGSServer(Server):
         for k, pc in enumerate(self.peer_communities):
             # Get number of clients to select from this cluster
             num_to_select = int(round(self.h_vector[k]))
-            
+
             if num_to_select <= 0:
                 selected_clients_per_cluster[k] = []
                 continue
-            
+
             # Check if cluster has enough clients
             if len(pc) < num_to_select:
                 logger.error(
@@ -966,7 +981,7 @@ class FedGSServer(Server):
                 selected = list(pc)  # Select all
             else:
                 selected = random.sample(list(pc), num_to_select)
-            
+
             selected_clients_per_cluster[k] = selected
             total_selected += num_to_select
 
@@ -980,8 +995,10 @@ class FedGSServer(Server):
 
         # Verify total selection count
         expected_total = self.S
-        logger.info(f"Total clients selected: {total_selected} (expected: {expected_total})")
-        
+        logger.info(
+            f"Total clients selected: {total_selected} (expected: {expected_total})"
+        )
+
         if total_selected != expected_total:
             logger.error(
                 f"Selection mismatch: selected {total_selected}, expected {expected_total}"

@@ -77,125 +77,86 @@ class FedGSAggregator(ClientsAvgAggregator):
             return {"model": self.aggregate_intra_group(client_feedback)}
 
     def _intra_group_aggregate(self, models):
-        """组内聚合：使用共识最大化聚合组内客户端的模型
-
-        Args:
-            models: 组内客户端模型列表
-
-        Returns:
-            聚合后的模型参数
-        """
+        """组内聚合：使用共识最大化聚合组内客户端的模型（逐层处理）"""
         if len(models) == 1:
-            # 如果只有一个客户端，直接返回其模型
             return models[0]["model_para"]
 
         logger.info(
-            f"Performing consensus maximization aggregation with {len(models)} clients"
+            f"Performing LAYER-WISE consensus maximization with {len(models)} clients"
         )
 
-        # 获取第一个模型作为基准
         aggregated_model = copy.deepcopy(models[0]["model_para"])
+        layer_keys = list(aggregated_model.keys())
+        logger.info(f"Aggregating layers: {layer_keys}")
 
-        logger.info(f"Initial aggregated model keys: {list(aggregated_model.keys())}")
+        # 逐层处理
+        for layer_name in layer_keys:
+            layer_vectors = []
+            valid_norms = []
 
-        # 将所有客户端的模型参数展平为单个向量
-        flattened_models = []
-        layer_shapes = {}
-        layer_order = list(aggregated_model.keys())
-
-        for model in models:
-            flattened_params = []
-            for layer_name in layer_order:
+            # 收集当前层所有客户端的参数
+            for model in models:
                 if layer_name in model["model_para"]:
                     layer_param = model["model_para"][layer_name]
-                    if layer_name not in layer_shapes:
-                        layer_shapes[layer_name] = layer_param.shape
-                    flattened_params.append(layer_param.flatten())
+                    layer_vector = layer_param.flatten()
+
+                    # 计算并保存该层的L2范数
+                    layer_norm = torch.norm(layer_vector, p=2)
+                    if layer_norm > 1e-8:  # 避免除零
+                        valid_norms.append(layer_norm)
+                        layer_vectors.append(layer_vector / layer_norm)
+                    else:
+                        # 范数接近零，保持原向量（避免信息丢失）
+                        layer_vectors.append(layer_vector.clone())
                 else:
-                    logger.warning(
-                        f"Layer {layer_name} not found in client model, using zeros"
+                    logger.warning(f"Layer {layer_name} missing in client model")
+                    layer_shape = aggregated_model[layer_name].shape
+                    layer_vectors.append(
+                        torch.zeros(
+                            torch.prod(torch.tensor(layer_shape)).to(
+                                layer_vectors[0].device
+                            )
+                        )
                     )
-                    if layer_name in layer_shapes:
-                        zero_param = torch.zeros(layer_shapes[layer_name]).flatten()
-                        flattened_params.append(zero_param)
 
-            # 将所有层的参数连接成一个向量
-            full_model_vector = torch.cat(flattened_params)
-            flattened_models.append(full_model_vector)
+            # 当前层执行共识最大化
+            if layer_vectors:
+                # 计算平均范数（只使用有效范数）
+                avg_norm = sum(valid_norms) / len(valid_norms) if valid_norms else 0
 
-        # 对整个模型向量执行共识最大化聚合
-        aggregated_vector = self._consensus_maximization_vector(flattened_models)
+                # 优化权重（使用支持等式约束的SLSQP方法）
+                weights = self._solve_consensus_weights(layer_vectors)
 
-        # 将聚合后的向量拆分回各层
-        start_idx = 0
-        for layer_name in layer_order:
-            if layer_name in layer_shapes:
-                layer_shape = layer_shapes[layer_name]
-                layer_size = torch.prod(torch.tensor(layer_shape)).item()
-                layer_vector = aggregated_vector[start_idx : start_idx + layer_size]
-                aggregated_model[layer_name] = layer_vector.reshape(layer_shape)
-                start_idx += layer_size
+                # 应用权重聚合
+                aggregated_vector = torch.zeros_like(layer_vectors[0])
+                for i, vector in enumerate(layer_vectors):
+                    aggregated_vector += weights[i] * vector
+
+                # 恢复原始尺度
+                if avg_norm > 1e-8:  # 仅在有效范数时缩放
+                    aggregated_vector *= avg_norm
+
+                aggregated_model[layer_name] = aggregated_vector.reshape(
+                    aggregated_model[layer_name].shape
+                )
+
+                logger.info(
+                    f"Layer {layer_name} aggregated | Avg norm: {avg_norm:.4f} | Weights: {weights}"
+                )
 
         return aggregated_model
 
-    def _consensus_maximization_vector(self, model_vectors):
-        """对整个模型向量执行共识最大化聚合
-
-        Args:
-            model_vectors: 所有客户端的模型向量列表
-
-        Returns:
-            聚合后的模型向量
-        """
-        N = len(model_vectors)
-        if N == 1:
-            return model_vectors[0]
-
-        # 计算每个客户端模型向量的L2范数
-        norms = []
-        normalized_vectors = []
-
-        for vector in model_vectors:
-            norm = torch.norm(vector, p=2)
-            norms.append(norm)
-            if norm > 1e-8:  # 避免除零
-                normalized_vectors.append(vector / norm)
-            else:
-                normalized_vectors.append(torch.zeros_like(vector))
-
-        # 计算平均范数
-        avg_norm = sum(norms) / N
-
-        # 求解优化问题：argmin_u ||∑_k u_k * d_{u,k}||_2^2
-        weights = self._solve_consensus_weights(normalized_vectors)
-
-        # 计算最终的聚合向量
-        aggregated_vector = torch.zeros_like(model_vectors[0])
-        for i, (weight, norm_vector) in enumerate(zip(weights, normalized_vectors)):
-            aggregated_vector += weight * norm_vector
-
-        # 乘以平均范数
-        final_vector = avg_norm * aggregated_vector
-        return final_vector
-
-    def _solve_consensus_weights(self, normalized_updates):
-        """求解共识权重优化问题
-
-        Args:
-            normalized_updates: 归一化后的更新向量列表
-
-        Returns:
-            优化后的权重向量
-        """
-        N = len(normalized_updates)
+    def _solve_consensus_weights(self, normalized_vectors):
+        """支持等式约束的共识权重优化"""
+        N = len(normalized_vectors)
         if N == 1:
             return [1.0]
 
-        # 将张量转换为numpy数组进行优化
-        updates_np = [update.detach().cpu().numpy() for update in normalized_updates]
+        # 转换为numpy数组
+        updates_np = [vec.detach().cpu().numpy() for vec in normalized_vectors]
 
         def objective(u):
-            """目标函数：||∑_k u_k * d_{u,k}^(l)||_2^2"""
+            """目标函数：最小化加权和的L2范数平方"""
             weighted_sum = np.zeros_like(updates_np[0])
             for i, weight in enumerate(u):
                 weighted_sum += weight * updates_np[i]
@@ -204,39 +165,31 @@ class FedGSAggregator(ClientsAvgAggregator):
         # 初始权重（均匀分布）
         u0 = np.ones(N) / N
 
-        # 约束条件：权重和为1，且每个权重非负
+        # 约束配置：权重和为1（等式约束）
         constraints = [{"type": "eq", "fun": lambda u: np.sum(u) - 1.0}]
-        bounds = [(0, 1) for _ in range(N)]
+        bounds = [(0.0, 1.0) for _ in range(N)]  # 权重范围0-1
 
         try:
-            # 使用scipy优化求解
+            # 使用SLSQP方法（支持等式约束）
             result = minimize(
                 objective,
                 u0,
                 method="SLSQP",
                 bounds=bounds,
                 constraints=constraints,
-                options={"maxiter": 1000, "ftol": 1e-9},
+                options={"maxiter": 500, "ftol": 1e-8},
             )
 
             if result.success:
-                weights = result.x.tolist()
-                logger.debug(
-                    f"Consensus optimization converged with weights: {weights}"
-                )
-            else:
-                logger.warning(
-                    f"Consensus optimization failed: {result.message}, using uniform weights"
-                )
-                weights = [1.0 / N] * N
-
+                weights = result.x / np.sum(result.x)  # 确保归一化
+                weights = np.maximum(weights, 0)  # 确保非负
+                return weights.tolist()
         except Exception as e:
-            logger.warning(
-                f"Error in consensus optimization: {str(e)}, using uniform weights"
-            )
-            weights = [1.0 / N] * N
+            logger.warning(f"Optimization error: {str(e)}")
 
-        return weights
+        # 回退方案：使用简单平均
+        logger.warning("Falling back to uniform weights")
+        return [1.0 / N] * N
 
     def _weighted_average_layer(self, models, layer_name):
         """对单层参数执行加权平均（备用方法）
@@ -398,23 +351,23 @@ class FedGSAggregator(ClientsAvgAggregator):
                 if key not in local_model:
                     continue
 
-                if self._cfg.federate.ignore_weight:
+                if self.cfg.federate.ignore_weight:
                     weight = 1.0 / len(models)
-                elif self._cfg.federate.use_ss:
+                elif self.cfg.federate.use_ss:
                     # When using secret sharing, what the server receives
                     # are sample_size * model_para
                     weight = 1.0
                 else:
                     weight = local_sample_size / training_set_size
 
-                if not self._cfg.federate.use_ss:
+                if not self.cfg.federate.use_ss:
                     local_model[key] = param2tensor(local_model[key])
                 if i == 0:
                     avg_model[key] = local_model[key] * weight
                 else:
                     avg_model[key] += local_model[key] * weight
 
-            if self._cfg.federate.use_ss and recover_fun:
+            if self.cfg.federate.use_ss and recover_fun:
                 avg_model[key] = recover_fun(avg_model[key])
                 # When using secret sharing, what the server receives are
                 # sample_size * model_para
