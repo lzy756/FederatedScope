@@ -1,0 +1,41 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 5
+seed: 12345
+federate:
+  mode: standalone
+  client_num: 100
+  method: fedsak
+  total_round_num: 300
+  make_global_eval: False
+aggregator:
+  lambda_: 0.005
+  lr_shared: 1
+  filter_keys: [""]
+data:
+  root: data/
+  type: 'cross_domain'
+  splitter: 'iid'
+dataloader:
+  batch_size: 64
+model:
+  type: vgg11
+  in_channels: 3
+  out_channels: 10
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: cvtrainer
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
