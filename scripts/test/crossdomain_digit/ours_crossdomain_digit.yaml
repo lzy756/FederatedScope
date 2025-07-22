@@ -13,6 +13,8 @@ data:
   root: data/
   type: cross_domain
   consistent_label_distribution: False
+  splitter_args: [{'alpha': 0.1}]
+  
 dataloader:
   batch_size: 64
 model:
@@ -35,8 +37,8 @@ eval:
   best_res_update_round_wise_key: test_loss
 
 aggregator:
-  lambda_: 10
-  lr_shared: 0
+  lambda_: 0
+  lr_shared: 0.01
   filter_keys:
     - conv1.weight
     - conv1.bias

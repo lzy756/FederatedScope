@@ -90,17 +90,7 @@ def load_syn(data_root, transform):
 
 
 def dirichlet_split(dataset, num_clients, alpha=0.5):
-    if hasattr(dataset, "targets"):
-        labels = np.array(dataset.targets)
-    elif hasattr(dataset, "y"):
-        labels = np.array(dataset.y)
-    elif hasattr(dataset, "labels"):
-        labels = np.array(dataset.labels)
-    elif hasattr(dataset, "samples"):
-        labels = np.array([s[1] for s in dataset.samples])
-    else:
-        raise AttributeError("Cannot find labels in dataset")
-
+    labels = np.array([s[1] for s in dataset])
     num_classes = labels.max() + 1
     client_indices = [[] for _ in range(num_clients)]
 
@@ -114,7 +104,6 @@ def dirichlet_split(dataset, num_clients, alpha=0.5):
         for client_id, c in enumerate(counts):
             client_indices[client_id].extend(idx_k[start : start + c])
             start += c
-
     for c in client_indices:
         random.shuffle(c)
     return client_indices
@@ -361,9 +350,17 @@ from federatedscope.core.data.base_data import StandaloneDataDict, ClientData
 from federatedscope.register import register_data
 
 
+def sample_data(dataset):
+    size = len(dataset)
+    indices = list(range(size))
+    random.shuffle(indices)
+    sampled_indices = indices[: int(size * 0.4)]  # 取40%
+    return Subset(dataset, sampled_indices)
+
+
 def load_cross_domain_data(config, client_cfgs=None):
     data_root = config.data.root
-
+    alpha = config.data.splitter_args[0].get("alpha", 0.5)
     # 加载数据集
     transform = transforms.Compose(
         [
@@ -387,6 +384,12 @@ def load_cross_domain_data(config, client_cfgs=None):
     usps_train, usps_test = load_usps(data_root, transform)
     svhn_train, svhn_test = load_svhn(data_root, transform)
     syn_train, syn_test = load_syn(data_root, transform)
+
+    mnist_train = sample_data(mnist_train)
+    usps_train = sample_data(usps_train)
+    svhn_train = sample_data(svhn_train)
+    syn_train = sample_data(syn_train)
+
     logger.info(
         f"Loaded datasets: MNIST, USPS, SVHN, SYN with {len(mnist_train)}, {len(usps_train)}, {len(svhn_train)}, {len(syn_train)} "
         f"train samples and {len(mnist_test)}, {len(usps_test)}, {len(svhn_test)}, {len(syn_test)} test samples each."
@@ -430,7 +433,7 @@ def load_cross_domain_data(config, client_cfgs=None):
     random.shuffle(all_test_indices)
     # 计算测试集总样本数
     # total_test_samples = sum(len(ds) for ds in all_test_datasets)
-    total_clients = 100
+    total_clients = config.federate.get("client_num", 100)  # 默认100个客户端
     per_client_test_size = total_test_samples // total_clients
     remainder = total_test_samples % total_clients
     test_splits = []
@@ -440,11 +443,32 @@ def load_cross_domain_data(config, client_cfgs=None):
         test_splits.append(Subset(all_test_datasets, all_test_indices[start:end]))
         start = end
 
+    total_train_samples = (
+        len(mnist_train) + len(usps_train) + len(svhn_train) + len(syn_train)
+    )
+
+    client_for_mnist = int(
+        np.ceil(len(mnist_train) / total_train_samples * total_clients)
+    )
+    client_for_usps = int(
+        np.ceil(len(usps_train) / total_train_samples * total_clients)
+    )
+    client_for_svhn = int(
+        np.ceil(len(svhn_train) / total_train_samples * total_clients)
+    )
+
+    client_for_syn = total_clients - (
+        client_for_mnist + client_for_usps + client_for_svhn
+    )
+
+    logger.info(
+        f"分配客户端数量: MNIST: {client_for_mnist}, USPS: {client_for_usps}, SVHN: {client_for_svhn}, SYN: {client_for_syn}"
+    )
     # 训练集按照不同的域名进行划分
-    mnist_train_idxs = dirichlet_split(mnist_train, 31, alpha=0.1)
-    usps_train_idxs = dirichlet_split(usps_train, 4, alpha=0.1)
-    svhn_train_idxs = dirichlet_split(svhn_train, 38, alpha=0.1)
-    syn_train_idxs = dirichlet_split(syn_train, 27, alpha=0.1)
+    mnist_train_idxs = dirichlet_split(mnist_train, client_for_mnist, alpha=alpha)
+    usps_train_idxs = dirichlet_split(usps_train, client_for_usps, alpha=alpha)
+    svhn_train_idxs = dirichlet_split(svhn_train, client_for_svhn, alpha=alpha)
+    syn_train_idxs = dirichlet_split(syn_train, client_for_syn, alpha=alpha)
     train_splits = []
 
     train_splits.extend([Subset(mnist_train, idxs) for idxs in mnist_train_idxs])

@@ -191,45 +191,6 @@ class FedGSAggregator(ClientsAvgAggregator):
         logger.warning("Falling back to uniform weights")
         return [1.0 / N] * N
 
-    def _weighted_average_layer(self, models, layer_name):
-        """对单层参数执行加权平均（备用方法）
-
-        Args:
-            models: 客户端模型列表
-            layer_name: 层名称
-
-        Returns:
-            加权平均后的层参数
-        """
-        total_samples = sum(
-            (
-                model["sample_size"]
-                if isinstance(model["sample_size"], int)
-                else int(model["sample_size"])
-            )
-            for model in models
-        )
-
-        weighted_layer = None
-        for model in models:
-            if layer_name in model["model_para"]:
-                weight = (
-                    model["sample_size"]
-                    if isinstance(model["sample_size"], int)
-                    else int(model["sample_size"])
-                ) / total_samples
-
-                if weighted_layer is None:
-                    weighted_layer = model["model_para"][layer_name] * weight
-                else:
-                    weighted_layer += model["model_para"][layer_name] * weight
-
-        return (
-            weighted_layer
-            if weighted_layer is not None
-            else torch.zeros_like(models[0]["model_para"][layer_name])
-        )
-
     def _inter_group_aggregate_fedsak(self, group_models):
         """组间聚合：使用FedSAK的trace-norm正则化方法聚合所有组的模型
 
@@ -328,50 +289,50 @@ class FedGSAggregator(ClientsAvgAggregator):
 
             return {"model_para_all": personalized}
 
-    def _para_weighted_avg(self, models, recover_fun=None):
-        """计算模型参数的加权平均
+    # def _para_weighted_avg(self, models, recover_fun=None):
+    #     """计算模型参数的加权平均
 
-        Args:
-            models: 模型列表，每个元素为(sample_size, model_para)元组
-            recover_fun: 恢复函数（用于secret sharing）
+    #     Args:
+    #         models: 模型列表，每个元素为(sample_size, model_para)元组
+    #         recover_fun: 恢复函数（用于secret sharing）
 
-        Returns:
-            加权平均后的模型参数
-        """
-        training_set_size = 0
-        for i in range(len(models)):
-            sample_size, _ = models[i]
-            training_set_size += sample_size
+    #     Returns:
+    #         加权平均后的模型参数
+    #     """
+    #     training_set_size = 0
+    #     for i in range(len(models)):
+    #         sample_size, _ = models[i]
+    #         training_set_size += sample_size
 
-        sample_size, avg_model = models[0]
-        for key in avg_model:
-            for i in range(len(models)):
-                local_sample_size, local_model = models[i]
+    #     sample_size, avg_model = models[0]
+    #     for key in avg_model:
+    #         for i in range(len(models)):
+    #             local_sample_size, local_model = models[i]
 
-                if key not in local_model:
-                    continue
+    #             if key not in local_model:
+    #                 continue
 
-                if self.cfg.federate.ignore_weight:
-                    weight = 1.0 / len(models)
-                elif self.cfg.federate.use_ss:
-                    # When using secret sharing, what the server receives
-                    # are sample_size * model_para
-                    weight = 1.0
-                else:
-                    weight = local_sample_size / training_set_size
+    #             if self.cfg.federate.ignore_weight:
+    #                 weight = 1.0 / len(models)
+    #             elif self.cfg.federate.use_ss:
+    #                 # When using secret sharing, what the server receives
+    #                 # are sample_size * model_para
+    #                 weight = 1.0
+    #             else:
+    #                 weight = local_sample_size / training_set_size
 
-                if not self.cfg.federate.use_ss:
-                    local_model[key] = param2tensor(local_model[key])
-                if i == 0:
-                    avg_model[key] = local_model[key] * weight
-                else:
-                    avg_model[key] += local_model[key] * weight
+    #             if not self.cfg.federate.use_ss:
+    #                 local_model[key] = param2tensor(local_model[key])
+    #             if i == 0:
+    #                 avg_model[key] = local_model[key] * weight
+    #             else:
+    #                 avg_model[key] += local_model[key] * weight
 
-            if self.cfg.federate.use_ss and recover_fun:
-                avg_model[key] = recover_fun(avg_model[key])
-                # When using secret sharing, what the server receives are
-                # sample_size * model_para
-                avg_model[key] /= training_set_size
-                avg_model[key] = torch.FloatTensor(avg_model[key])
+    #         if self.cfg.federate.use_ss and recover_fun:
+    #             avg_model[key] = recover_fun(avg_model[key])
+    #             # When using secret sharing, what the server receives are
+    #             # sample_size * model_para
+    #             avg_model[key] /= training_set_size
+    #             avg_model[key] = torch.FloatTensor(avg_model[key])
 
-        return avg_model
+    #     return avg_model

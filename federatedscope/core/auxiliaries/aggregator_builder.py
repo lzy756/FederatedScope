@@ -51,25 +51,35 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
         ``core.aggregators.FedOptAggregator``
         ==================================  ===========================
     """
-    if config.backend == 'tensorflow':
+    if config.backend == "tensorflow":
         from federatedscope.cross_backends import FedAvgAggregator
+
         return FedAvgAggregator(model=model, device=device)
     else:
-        from federatedscope.core.aggregators import ClientsAvgAggregator, \
-            OnlineClientsAvgAggregator, ServerClientsInterpolateAggregator, \
-            FedOptAggregator, NoCommunicationAggregator, \
-            AsynClientsAvgAggregator, KrumAggregator, \
-            MedianAggregator, TrimmedmeanAggregator, \
-            BulyanAggregator,  NormboundingAggregator, \
-            FedSAKAggregator, FedGSAggregator
+        from federatedscope.core.aggregators import (
+            ClientsAvgAggregator,
+            OnlineClientsAvgAggregator,
+            ServerClientsInterpolateAggregator,
+            FedOptAggregator,
+            NoCommunicationAggregator,
+            AsynClientsAvgAggregator,
+            KrumAggregator,
+            MedianAggregator,
+            TrimmedmeanAggregator,
+            BulyanAggregator,
+            NormboundingAggregator,
+            FedSAKAggregator,
+            FedGSAggregator,
+            MGDAAggregator,
+        )
 
     STR2AGG = {
-        'fedavg': ClientsAvgAggregator,
-        'krum': KrumAggregator,
-        'median': MedianAggregator,
-        'bulyan': BulyanAggregator,
-        'trimmedmean': TrimmedmeanAggregator,
-        'normbounding': NormboundingAggregator
+        "fedavg": ClientsAvgAggregator,
+        "krum": KrumAggregator,
+        "median": MedianAggregator,
+        "bulyan": BulyanAggregator,
+        "trimmedmean": TrimmedmeanAggregator,
+        "normbounding": NormboundingAggregator,
     }
 
     if method.lower() in constants.AGGREGATOR_TYPE:
@@ -77,53 +87,55 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
     else:
         aggregator_type = "clients_avg"
         logger.warning(
-            'Aggregator for method {} is not implemented. Will use default one'
-            .format(method))
+            "Aggregator for method {} is not implemented. Will use default one".format(
+                method
+            )
+        )
 
-    if config.data.type.lower() == 'hetero_nlp_tasks' and \
-            not config.federate.atc_vanilla:
+    if (
+        config.data.type.lower() == "hetero_nlp_tasks"
+        and not config.federate.atc_vanilla
+    ):
         from federatedscope.nlp.hetero_tasks.aggregator import ATCAggregator
+
         return ATCAggregator(model=model, config=config, device=device)
 
-    if config.fedopt.use or aggregator_type == 'fedopt':
+    if config.fedopt.use or aggregator_type == "fedopt":
         return FedOptAggregator(config=config, model=model, device=device)
-    elif aggregator_type == 'clients_avg':
+    elif aggregator_type == "clients_avg":
         if online:
             return OnlineClientsAvgAggregator(
                 model=model,
                 device=device,
                 config=config,
-                src_device=device
-                if config.federate.share_local_model else 'cpu')
+                src_device=device if config.federate.share_local_model else "cpu",
+            )
         elif config.asyn.use:
-            return AsynClientsAvgAggregator(model=model,
-                                            device=device,
-                                            config=config)
+            return AsynClientsAvgAggregator(model=model, device=device, config=config)
         else:
             if config.aggregator.robust_rule not in STR2AGG:
                 logger.warning(
-                    f'The specified {config.aggregator.robust_rule} aggregtion\
+                    f"The specified {config.aggregator.robust_rule} aggregtion\
                     rule has not been supported, the vanilla fedavg algorithm \
-                    will be used instead.')
-            return STR2AGG.get(config.aggregator.robust_rule,
-                               ClientsAvgAggregator)(model=model,
-                                                     device=device,
-                                                     config=config)
+                    will be used instead."
+                )
+            return STR2AGG.get(config.aggregator.robust_rule, ClientsAvgAggregator)(
+                model=model, device=device, config=config
+            )
 
-    elif aggregator_type == 'server_clients_interpolation':
+    elif aggregator_type == "server_clients_interpolation":
         return ServerClientsInterpolateAggregator(
-            model=model,
-            device=device,
-            config=config,
-            beta=config.personalization.beta)
-    elif aggregator_type == 'no_communication':
-        return NoCommunicationAggregator(model=model,
-                                         device=device,
-                                         config=config)
-    elif aggregator_type == 'fedsak':
+            model=model, device=device, config=config, beta=config.personalization.beta
+        )
+    elif aggregator_type == "no_communication":
+        return NoCommunicationAggregator(model=model, device=device, config=config)
+    elif aggregator_type == "fedsak":
         return FedSAKAggregator(config=config)
-    elif aggregator_type == 'fedgs':
+    elif aggregator_type == "fedgs":
         return FedGSAggregator(config=config)
+    elif aggregator_type == "mgda":
+        return MGDAAggregator(model=model, device=device, config=config)
     else:
         raise NotImplementedError(
-            "Aggregator {} is not implemented.".format(aggregator_type))
+            "Aggregator {} is not implemented.".format(aggregator_type)
+        )
