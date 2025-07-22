@@ -146,3 +146,9 @@ exp/
 data_info.txt
 peer_communities.txt
 test_data_info.txt
+scripts/test/crossdomain_digit/fedavg_crossdomain_digit.yaml
+scripts/test/crossdomain_digit/fedprox_crossdomain_digit.yaml
+scripts/test/crossdomain_digit/fedsak_crossdomain_digit.yaml
+scripts/test/crossdomain_digit/mgda_crossdomain_digit.yaml
+environment.yml
+formula.md

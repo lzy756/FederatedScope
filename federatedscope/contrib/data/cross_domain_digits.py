@@ -350,11 +350,11 @@ from federatedscope.core.data.base_data import StandaloneDataDict, ClientData
 from federatedscope.register import register_data
 
 
-def sample_data(dataset):
+def sample_data(dataset, samples=2000):
     size = len(dataset)
     indices = list(range(size))
     random.shuffle(indices)
-    sampled_indices = indices[: int(size * 0.4)]  # 取40%
+    sampled_indices = indices[:samples]
     return Subset(dataset, sampled_indices)
 
 
@@ -385,10 +385,14 @@ def load_cross_domain_data(config, client_cfgs=None):
     svhn_train, svhn_test = load_svhn(data_root, transform)
     syn_train, syn_test = load_syn(data_root, transform)
 
-    mnist_train = sample_data(mnist_train)
-    usps_train = sample_data(usps_train)
-    svhn_train = sample_data(svhn_train)
-    syn_train = sample_data(syn_train)
+    mnist_train = sample_data(mnist_train, 6000)
+    # usps_train = sample_data(usps_train)
+    svhn_train = sample_data(svhn_train, 10000)
+    # syn_train = sample_data(syn_train)
+    mnist_test = sample_data(mnist_test, 2000)
+    usps_test = sample_data(usps_test, 2000)
+    svhn_test = sample_data(svhn_test, 2000)
+    syn_test = sample_data(syn_test, 2000)
 
     logger.info(
         f"Loaded datasets: MNIST, USPS, SVHN, SYN with {len(mnist_train)}, {len(usps_train)}, {len(svhn_train)}, {len(syn_train)} "
