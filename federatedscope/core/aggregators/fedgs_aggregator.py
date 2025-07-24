@@ -21,9 +21,9 @@ class FedGSAggregator(ClientsAvgAggregator):
         super().__init__(model, device, config)
 
         # FedSAK specific parameters
-        self.lmbda = config.aggregator.get("lambda_", 1e-3)  # trace-norm正则化强度
-        self.lr = config.aggregator.get("lr_shared", 0.05)  # 学习率
-        self.share_patterns = config.fedsak.share_patterns  # 共享层配置
+        self.lmbda_ = config.aggregator.get("lambda_", 1e-3)  # trace-norm正则化强度
+        # self.lr = config.aggregator.get("lr_shared", 0.05)  # 学习率
+        # self.share_patterns = config.fedsak.share_patterns  # 共享层配置
 
     def aggregate_intra_group(self, client_feedback):
         """组内聚合：使用加权平均聚合组内客户端的模型
@@ -200,7 +200,7 @@ class FedGSAggregator(ClientsAvgAggregator):
         Returns:
             聚合后的个性化模型参数
         """
-        if self.lmbda == 0:
+        if self.lmbda_ == 0:
             # 如果lambda为0，直接使用加权平均
             models = []
             for feedback in group_models:
@@ -218,121 +218,99 @@ class FedGSAggregator(ClientsAvgAggregator):
             return {"model_para_all": personalized}
         else:
             # 从group_models中提取必要信息
-            group_ids = []
+            cluster_ids = []
             model_params = []
 
             for feedback in group_models:
-                group_ids.append(feedback["client_id"])
+                cluster_ids.append(feedback["client_id"])
                 model_para = feedback["model_para"]
                 model_params.append(model_para)
-            logger.info(f"Aggregating models with {model_params[0].keys()} keys")
-            n_groups = len(model_params)
-            updated_dicts = [dict() for _ in range(n_groups)]
 
-            # 处理每个共享模式
-            for pattern in self.share_patterns:
-                try:
-                    # 查找匹配该模式的所有键
-                    matching_keys = []
-                    for params in model_params:
-                        matching_keys.extend([k for k in params.keys() if pattern in k])
-                    # 去重
-                    matching_keys = list(set(matching_keys))
+            n_cluster = len(model_params)
+            updated_dicts = [dict() for _ in range(n_cluster)]
+            layers = list(model_params[0].keys())
 
-                    if not matching_keys:
-                        logger.warning(f"No keys found matching pattern '{pattern}'")
-                        continue
+            for layer in layers:
+                logger.info(f"Processing layer: {layer}")
+                if not all(layer in params for params in model_params):
+                    logger.warning(f"Layer {layer} missing in some models")
+                    # 如果某个组没有此层，保留原参数
+                    for idx in range(n_cluster):
+                        if layer in model_params[idx]:
+                            updated_dicts[idx][layer] = model_params[idx][layer]
+                    continue
+                shapes = [params[layer].shape for params in model_params]
+                W = torch.stack([params[layer].flatten() for params in model_params], 0)
+                # SVD分解
+                U, S, Vh = torch.linalg.svd(W, full_matrices=False)
 
-                    # 处理每个匹配的键
-                    for k in matching_keys:
-                        # 检查所有组是否都有此键
-                        if all(k in params for params in model_params):
-                            # 提取形状信息
-                            shapes = [params[k].shape for params in model_params]
-                            # 堆叠参数矩阵
-                            W = torch.stack(
-                                [params[k].flatten() for params in model_params], 0
-                            )
-                            # 执行SVD分解
-                            U, S, Vh = torch.linalg.svd(W, full_matrices=False)
+                grad = U @ Vh  # 计算次梯度
 
-                            # 计算rank
-                            threshold = 1e-4
-                            rank_W = torch.sum(S > threshold).item()
+                # 更新参数
+                W_new = W - self.lmbda_ * grad
 
-                            # 计算最小的奇异值
-                            min_sigma = torch.min(S).item()
+                # 还原各组参数形状
+                for idx, slice_vec in enumerate(W_new):
+                    updated_dicts[idx][layer] = slice_vec.reshape(shapes[idx])
 
-                            # # 打印日志
-                            # logger.info(
-                            #     f"[FedSAK] rank={rank_W}, minσ={min_sigma:.2e}, Σ1={S[0]:.2e}, Σ2={S[1]:.2e}, Σ3={S[2]:.2e}"
-                            # )
+            # # 处理每个共享模式
+            # for pattern in self.share_patterns:
+            #     try:
+            #         # 查找匹配该模式的所有键
+            #         matching_keys = []
+            #         for params in model_params:
+            #             matching_keys.extend([k for k in params.keys() if pattern in k])
+            #         # 去重
+            #         matching_keys = list(set(matching_keys))
 
-                            # 计算次梯度
-                            grad = U @ Vh
-                            # 更新参数
-                            W_new = W - self.lr * self.lmbda * grad
-                            # 还原各组参数形状
-                            for idx, slice_vec in enumerate(W_new):
-                                updated_dicts[idx][k] = slice_vec.reshape(shapes[idx])
-                        else:
-                            logger.warning(f"Key '{k}' not found in all group models")
-                            # 保留原参数
-                            for idx in range(n_groups):
-                                if k in model_params[idx]:
-                                    updated_dicts[idx][k] = model_params[idx][k]
-                except Exception as e:
-                    logger.warning(f"Error processing pattern '{pattern}': {str(e)}")
+            #         if not matching_keys:
+            #             logger.warning(f"No keys found matching pattern '{pattern}'")
+            #             continue
+
+            #         # 处理每个匹配的键
+            #         for k in matching_keys:
+            #             # 检查所有组是否都有此键
+            #             if all(k in params for params in model_params):
+            #                 # 提取形状信息
+            #                 shapes = [params[k].shape for params in model_params]
+            #                 # 堆叠参数矩阵
+            #                 W = torch.stack(
+            #                     [params[k].flatten() for params in model_params], 0
+            #                 )
+            #                 # 执行SVD分解
+            #                 U, S, Vh = torch.linalg.svd(W, full_matrices=False)
+
+            #                 # 计算rank
+            #                 threshold = 1e-4
+            #                 rank_W = torch.sum(S > threshold).item()
+
+            #                 # 计算最小的奇异值
+            #                 min_sigma = torch.min(S).item()
+
+            #                 # # 打印日志
+            #                 # logger.info(
+            #                 #     f"[FedSAK] rank={rank_W}, minσ={min_sigma:.2e}, Σ1={S[0]:.2e}, Σ2={S[1]:.2e}, Σ3={S[2]:.2e}"
+            #                 # )
+
+            #                 # 计算次梯度
+            #                 grad = U @ Vh
+            #                 # 更新参数
+            #                 W_new = W - self.lr * self.lmbda * grad
+            #                 # 还原各组参数形状
+            #                 for idx, slice_vec in enumerate(W_new):
+            #                     updated_dicts[idx][k] = slice_vec.reshape(shapes[idx])
+            #             else:
+            #                 logger.warning(f"Key '{k}' not found in all group models")
+            #                 # 保留原参数
+            #                 for idx in range(n_cluster):
+            #                     if k in model_params[idx]:
+            #                         updated_dicts[idx][k] = model_params[idx][k]
+            #     except Exception as e:
+            #         logger.warning(f"Error processing pattern '{pattern}': {str(e)}")
 
             # 构建返回格式
-            personalized = {gid: state for gid, state in zip(group_ids, updated_dicts)}
+            personalized = {
+                gid: state for gid, state in zip(cluster_ids, updated_dicts)
+            }
 
             return {"model_para_all": personalized}
-
-    # def _para_weighted_avg(self, models, recover_fun=None):
-    #     """计算模型参数的加权平均
-
-    #     Args:
-    #         models: 模型列表，每个元素为(sample_size, model_para)元组
-    #         recover_fun: 恢复函数（用于secret sharing）
-
-    #     Returns:
-    #         加权平均后的模型参数
-    #     """
-    #     training_set_size = 0
-    #     for i in range(len(models)):
-    #         sample_size, _ = models[i]
-    #         training_set_size += sample_size
-
-    #     sample_size, avg_model = models[0]
-    #     for key in avg_model:
-    #         for i in range(len(models)):
-    #             local_sample_size, local_model = models[i]
-
-    #             if key not in local_model:
-    #                 continue
-
-    #             if self.cfg.federate.ignore_weight:
-    #                 weight = 1.0 / len(models)
-    #             elif self.cfg.federate.use_ss:
-    #                 # When using secret sharing, what the server receives
-    #                 # are sample_size * model_para
-    #                 weight = 1.0
-    #             else:
-    #                 weight = local_sample_size / training_set_size
-
-    #             if not self.cfg.federate.use_ss:
-    #                 local_model[key] = param2tensor(local_model[key])
-    #             if i == 0:
-    #                 avg_model[key] = local_model[key] * weight
-    #             else:
-    #                 avg_model[key] += local_model[key] * weight
-
-    #         if self.cfg.federate.use_ss and recover_fun:
-    #             avg_model[key] = recover_fun(avg_model[key])
-    #             # When using secret sharing, what the server receives are
-    #             # sample_size * model_para
-    #             avg_model[key] /= training_set_size
-    #             avg_model[key] = torch.FloatTensor(avg_model[key])
-
-    #     return avg_model
