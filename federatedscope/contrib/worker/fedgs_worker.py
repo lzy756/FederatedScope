@@ -22,7 +22,7 @@ from federatedscope.core.workers.server import Server
 from federatedscope.core.workers.client import Client
 from federatedscope.core.auxiliaries.utils import merge_dict_of_results
 from federatedscope.register import register_worker
-from federatedscope.contrib.data.cross_domain_digits import load_cluster_results
+from federatedscope.contrib.data.utils import load_cluster_results
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +83,10 @@ class FedGSServer(Server):
         self.h_vector = None  # Template vector for cluster-based selection (solved once at initialization)
 
         # Template solving parameters
-        self.S = config.federate.get(
-            "sample_client_num", 25
-        )  # Total clients to select per round
-        self.n_batch_size = config.dataloader.get(
-            "batch_size", 32
-        )  # Batch size per client
+        self.S = config.federate.get("sample_client_num", 25)
+        # Total clients to select per round
+        self.n_batch_size = config.dataloader.get("batch_size", 32)
+        # Batch size per client
         self.A_matrix = None  # Feature matrix A
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
@@ -104,7 +102,7 @@ class FedGSServer(Server):
         K = len(self.peer_communities) if self.peer_communities else 0
         if self.S < K:
             old_S = self.S
-            self.S = K + 5
+            self.S = K
             logger.info(f"Adjusted S from {old_S} to {self.S} (K={K}, S must be >= K)")
 
     def _initialize_communities(self):
@@ -126,9 +124,9 @@ class FedGSServer(Server):
         # peer_communities_path = "peer_communities.txt"
         # data_info_path = "data_info.txt"
         # test_data_path = "test_data_info.txt"
-
+        data_root = self._cfg.data.root
         train_dists, test_dists, self.peer_communities = load_cluster_results(
-            "data/peer_communities.json"
+            f"{data_root}/peer_communities.json"
         )
         # Load test set distribution first (this will be our target)
 
