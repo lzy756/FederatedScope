@@ -70,6 +70,7 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
             NormboundingAggregator,
             FedSAKAggregator,
             FedGSAggregator,
+            MIXAggregator,
             MGDAAggregator,
         )
 
@@ -133,8 +134,10 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
         return FedSAKAggregator(config=config)
     elif aggregator_type == "fedgs":
         return FedGSAggregator(config=config)
+    elif aggregator_type == "mix":
+        return MIXAggregator(config=config)
     elif aggregator_type == "mgda":
-        return MGDAAggregator(model=model, device=device, config=config)
+        return MGDAAggregator(config=config)
     else:
         raise NotImplementedError(
             "Aggregator {} is not implemented.".format(aggregator_type)

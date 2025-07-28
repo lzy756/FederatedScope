@@ -134,7 +134,7 @@ def adaptive_cluster_clients(
         )
 
         clustering = DBSCAN(
-            eps=mid_jsd, min_samples=1, metric="precomputed"  # 单个样本可成簇
+            eps=mid_jsd, min_samples=10, metric="precomputed"  # 单个样本可成簇
         )
         cluster_labels = clustering.fit_predict(jsd_matrix)
         num_clusters = len(np.unique(cluster_labels))

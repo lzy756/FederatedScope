@@ -17,6 +17,7 @@ from federatedscope.contrib.data.utils import (
     get_label_distribution,
     adaptive_cluster_clients,
     save_cluster_results,
+    uniform_split,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def load_office_caltech10(config, client_cfgs=None):
         root = os.path.join(data_root, dm)
         # train dataset
         total_sample = datasets.ImageFolder(root, transform=office_transforms)
-        train_size = int(0.8 * len(total_sample))
+        train_size = int(0.75 * len(total_sample))
         test_size = len(total_sample) - train_size
         train_dataset, test_dataset = torch.utils.data.random_split(
             total_sample, [train_size, test_size]
@@ -64,7 +65,7 @@ def load_office_caltech10(config, client_cfgs=None):
 
     test_splits = []
     for ds, num in zip(test_ds, client_for_each_domain):
-        parts = dirichlet_split(ds, num, alpha)
+        parts = uniform_split(ds, num)
         test_splits += [Subset(ds, p) for p in parts]
 
     # distributions

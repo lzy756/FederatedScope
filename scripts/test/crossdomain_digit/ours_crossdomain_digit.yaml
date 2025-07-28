@@ -38,7 +38,7 @@ eval:
 
 aggregator:
   lambda_: 0
-  lr_shared: 0.01
+  lr_shared: 0
   filter_keys:
     - conv1.weight
     - conv1.bias

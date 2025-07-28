@@ -10,7 +10,8 @@ class ClientsAvgAggregator(Aggregator):
     learning of deep networks from decentralized data' [McMahan et al., 2017] \
     http://proceedings.mlr.press/v54/mcmahan17a.html
     """
-    def __init__(self, model=None, device='cpu', config=None):
+
+    def __init__(self, model=None, device="cpu", config=None):
         super(Aggregator, self).__init__()
         self.model = model
         self.device = device
@@ -28,8 +29,11 @@ class ClientsAvgAggregator(Aggregator):
         """
 
         models = agg_info["client_feedback"]
-        recover_fun = agg_info['recover_fun'] if (
-            'recover_fun' in agg_info and self.cfg.federate.use_ss) else None
+        recover_fun = (
+            agg_info["recover_fun"]
+            if ("recover_fun" in agg_info and self.cfg.federate.use_ss)
+            else None
+        )
         avg_model = self._para_weighted_avg(models, recover_fun=recover_fun)
 
         return avg_model
@@ -44,7 +48,7 @@ class ClientsAvgAggregator(Aggregator):
     def save_model(self, path, cur_round=-1):
         assert self.model is not None
 
-        ckpt = {'cur_round': cur_round, 'model': self.model.state_dict()}
+        ckpt = {"cur_round": cur_round, "model": self.model.state_dict()}
         torch.save(ckpt, path)
 
     def load_model(self, path):
@@ -52,8 +56,8 @@ class ClientsAvgAggregator(Aggregator):
 
         if os.path.exists(path):
             ckpt = torch.load(path, map_location=self.device)
-            self.model.load_state_dict(ckpt['model'])
-            return ckpt['cur_round']
+            self.model.load_state_dict(ckpt["model"])
+            return ckpt["cur_round"]
         else:
             raise ValueError("The file {} does NOT exist".format(path))
 
@@ -104,11 +108,8 @@ class OnlineClientsAvgAggregator(ClientsAvgAggregator):
     """
     Implementation of online aggregation of FedAvg.
     """
-    def __init__(self,
-                 model=None,
-                 device='cpu',
-                 src_device='cpu',
-                 config=None):
+
+    def __init__(self, model=None, device="cpu", src_device="cpu", config=None):
         super(OnlineClientsAvgAggregator, self).__init__(model, device, config)
         self.src_device = src_device
 
@@ -119,7 +120,8 @@ class OnlineClientsAvgAggregator(ClientsAvgAggregator):
         self.maintained = self.model.state_dict()
         for key in self.maintained:
             self.maintained[key].data = torch.zeros_like(
-                self.maintained[key], device=self.src_device)
+                self.maintained[key], device=self.src_device
+            )
         self.cnt = 0
 
     def inc(self, content):
@@ -133,13 +135,14 @@ class OnlineClientsAvgAggregator(ClientsAvgAggregator):
                     continue
                 # if model_params[key].device != self.maintained[key].device:
                 #    model_params[key].to(self.maintained[key].device)
-                self.maintained[key] = (self.cnt * self.maintained[key] +
-                                        sample_size * model_params[key]) / (
-                                            self.cnt + sample_size)
+                self.maintained[key] = (
+                    self.cnt * self.maintained[key] + sample_size * model_params[key]
+                ) / (self.cnt + sample_size)
             self.cnt += sample_size
         else:
             raise TypeError(
-                "{} is not a tuple (sample_size, model_para)".format(content))
+                "{} is not a tuple (sample_size, model_para)".format(content)
+            )
 
     def aggregate(self, agg_info):
         """

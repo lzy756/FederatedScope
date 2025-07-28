@@ -23,6 +23,7 @@ from federatedscope.core.aggregators.normbounding_aggregator import (
 from federatedscope.core.aggregators.fedsak_aggregator import FedSAKAggregator
 from federatedscope.core.aggregators.fedgs_aggregator import FedGSAggregator
 from federatedscope.core.aggregators.mgda_aggregator import MGDAAggregator
+from federatedscope.core.aggregators.mix_aggregator import MIXAggregator
 
 __all__ = [
     "Aggregator",
@@ -39,5 +40,6 @@ __all__ = [
     "NormboundingAggregator",
     "FedSAKAggregator",
     "FedGSAggregator",
+    "MIXAggregator",  # MixFed, using FedGSAggregator
     "MGDAAggregator",
 ]

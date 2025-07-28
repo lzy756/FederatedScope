@@ -5,15 +5,15 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 200
+  total_round_num: 100
   client_num: 10
-  method: fedgs
+  method: mix
   sample_client_num: 10 # 每轮选取的用户数
 data:
   root: data/office_caltech_10/
   type: office_caltech10
   consistent_label_distribution: False
-  splitter_args: [{'alpha': 0.1}]
+  splitter_args: [{'alpha': 0.01}]
 dataloader:
   batch_size: 64
 model:
@@ -21,20 +21,24 @@ model:
   in_channels: 3
   out_channels: 100
 train:
-  local_update_steps: 2
+  local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.1
+    lr: 0.01
     weight_decay: 0.0
 grad:
   grad_clip: 5.0
 criterion:
   type: CrossEntropyLoss
 eval:
-  freq: 5
+  freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
 trainer:
   type: cvtrainer
 aggregator:
   lambda_: 0.01
+  lr_shared: 0
+
+personalization:
+    local_param: ['bn', 'norms']
