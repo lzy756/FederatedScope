@@ -8,6 +8,7 @@ federate:
   total_round_num: 60
   client_num: 100
   method: fedgs
+  sample_client_num: 25
 data:
   root: data/
   type: 'cross_domain'
@@ -36,8 +37,6 @@ eval:
   freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
-fedgs:
-  S: 25
 aggregator:
   lambda_: 2
   lr_shared: 0.05

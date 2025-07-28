@@ -1,0 +1,66 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 42
+federate:
+  mode: standalone
+  total_round_num: 100
+  client_num: 10
+  sample_client_num: 10
+  method: fedgs
+data:
+  root: data/
+  type: amazon
+  consistent_label_distribution: False
+  splitter: RESISC45splitter
+dataloader:
+  batch_size: 64
+model:
+  type: cross_domain_digit_cnn
+  in_channels: 3
+  out_channels: 10
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
+  count_flops: False
+aggregator:
+  lambda_: 0.1
+  lr_shared: 0.05
+  filter_keys:
+    - conv1.weight
+    - conv1.bias
+    - conv2.weight
+    - conv2.bias
+    - fc1.weight
+    - fc1.bias
+    - fc2.weight
+    - fc2.bias
+    - fc3.weight
+    - fc3.bias
+fedsak:
+  per_round: 10
+  share_patterns:
+    - conv1.weight
+    - conv1.bias
+    - conv2.weight
+    - conv2.bias
+    - fc1.weight
+    - fc1.bias
+    - fc2.weight
+    - fc2.bias
+    - fc3.weight
+    - fc3.bias
+trainer:
+  type: fedsak

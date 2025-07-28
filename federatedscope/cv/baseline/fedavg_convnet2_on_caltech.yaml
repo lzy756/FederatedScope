@@ -1,0 +1,48 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 50
+  delta: 0.0
+
+federate:
+  mode: standalone
+  client_num: 10
+  sample_client_num: 10
+
+data:
+  root: data/
+  type: caltech
+  splits: [0.8, 0.0, 0.2]
+  batch_size: 16
+  subsample: 1.0
+  transform: []
+
+dataloader:
+  type: base
+  batch_size: 16
+
+model:
+  type: convnet2
+  hidden: 2048
+  dropout: 0.0
+
+train:
+  optimizer:
+    type: SGD
+    lr: 0.01
+    momentum: 0.9
+    weight_decay: 0.0005
+  local_update_steps: 5
+  batch_or_epoch: epoch
+
+eval:
+  freq: 5
+  metrics: ['acc', 'correct']
+
+criterion:
+  type: CrossEntropyLoss
+
+trainer:
+  type: cvtrainer
+
+seed: 12345

@@ -52,10 +52,21 @@ def call_cross_domain_digit_cnn(model_config, local_data):
     Returns:
         An instance of CrossDomainDigitCNN.
     """
-    in_channel = getattr(model_config, "in_channels", 1)
-    num_classes = getattr(model_config, "num_classes", 10)
-    return ModelBuilder(in_channel, num_classes)
+    if (model_config.type == "cross_domain_digit_cnn"):
+        in_channel = getattr(model_config, "in_channels", 1)
+        num_classes = getattr(model_config, "num_classes", 10)
+        return ModelBuilder(in_channel, num_classes)
 
 
 # Register the model with the name 'cross_domain_digit_cnn'
 register_model("cross_domain_digit_cnn", call_cross_domain_digit_cnn)
+
+def main():
+    """
+    主函数：创建模型并打印所有参数名称
+    """
+    model = CrossDomainDigitCNN(in_channel=1, num_classes=10)
+    for name, param in model.named_parameters():
+        print(f"- {name}")
+if __name__ == "__main__":
+    main()

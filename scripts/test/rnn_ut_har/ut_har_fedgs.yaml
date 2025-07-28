@@ -6,9 +6,9 @@ seed: 12345
 federate:
   mode: standalone
   total_round_num: 500
-  sample_client_rate: 1
   client_num: 25
   method: fedgs
+  sample_client_num: 25
 data:
   root: data/
   type: ut_har
@@ -37,8 +37,6 @@ eval:
   freq: 1
   metrics: ['acc', 'loss']
   best_res_update_round_wise_key: test_loss
-fedgs:
-  S: 25
 aggregator:
   lambda_: 0.1
   lr_shared: 0.05

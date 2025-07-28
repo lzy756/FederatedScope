@@ -25,3 +25,13 @@ def call_rnn_model(model_config, local_data):
 
 # 注册模型
 register_model("rnn", call_rnn_model)
+
+def main():
+    """
+    主函数：创建模型并打印所有参数名称
+    """
+    model = UT_HAR_RNN()
+    for name, param in model.named_parameters():
+        print(f"- {name}")
+if __name__ == "__main__":
+    main()

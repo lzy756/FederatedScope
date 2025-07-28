@@ -4,23 +4,14 @@ early_stop:
   patience: 0
 seed: 12345
 federate:
-  client_num: 100
-  method: fedsak
   mode: standalone
   total_round_num: 60
-  sample_client_rate: 0.25
-data:
-  root: data/
-  type: 'cross_domain_test'
-  consistent_label_distribution: False
-  splitter : lda
-  splitter_args: [{
-    'alpha': 0.5
-  }]
+  client_num: 100
+  method: fedsak
 aggregator:
   lambda_: 2
   lr_shared: 0.05
-  filter_keys:
+  filter_keys:                 
   - layer1.0.conv1.weight
   - layer1.0.bn1.weight
   - layer1.0.bn1.bias
@@ -80,7 +71,7 @@ aggregator:
   - layer4.1.bn2.bias
   - linear.weight
   - linear.bias
-fedsak:
+fedsak:               
   share_patterns:
   - layer1.0.conv1.weight
   - layer1.0.bn1.weight
@@ -141,8 +132,16 @@ fedsak:
   - layer4.1.bn2.bias
   - linear.weight
   - linear.bias
-trainer:
-  type: fedsak
+data:
+  type: SVHN@torchvision
+  args: [{'download': True}]
+  splits: [0.6,0.2,0.2]
+  subsample: 1.0
+  transform: [['ToTensor'], ['Normalize', {'mean': [0.9637], 'std': [0.1592]}]]
+  splitter: lda
+  splitter_args: [{
+    'alpha': 0.1
+  }]
 dataloader:
   batch_size: 10
 model:
@@ -159,7 +158,8 @@ grad:
   grad_clip: 5.0
 criterion:
   type: CrossEntropyLoss
+trainer:
+  type: fedsak
 eval:
   freq: 1
   metrics: ['acc', 'correct']
-  best_res_update_round_wise_key: test_loss

@@ -37,11 +37,11 @@ class FedGS_Splitter(BaseSplitter):
         self.call_count = 0  # 记录__call__被调用的次数
         super(FedGS_Splitter, self).__init__(client_num)
 
-    def save_data_info(self, save_path="data_info.txt"):
-        """Save client data distribution information to text file
+    def save_cluster_results(self, save_path="data/peer_communities.json"):
+        """Save all clustering results to a single JSON file
 
         Args:
-            save_path: Save path, defaults to 'data_info.txt'
+            save_path: Save path, defaults to 'data/peer_communities.json'
         """
         # Ensure directory exists
         os.makedirs(
@@ -49,206 +49,97 @@ class FedGS_Splitter(BaseSplitter):
             exist_ok=True,
         )
 
-        # Format data
-        formatted_data = []
-        for client_idx, dist in enumerate(self.data_info):
-            # Convert NumPy array to normal list and ensure numeric values
-            if isinstance(dist, dict) and "distribution" in dist:
-                dist = dist["distribution"]
-            dist = np.array(dist, dtype=np.float32)
-            client_total = float(np.sum(dist))
-            percentages = [f"{(count/client_total*100):.2f}%" for count in dist]
-
-            formatted_data.append(
-                {
-                    "client_id": client_idx + 1,
-                    "distribution": dist.tolist(),
-                    "percentages": percentages,
-                    "total_samples": client_total,
-                }
+        # Prepare train distributions
+        train_distributions = []
+        for dist_info in self.data_info:
+            if isinstance(dist_info, dict) and "distribution" in dist_info:
+                dist = dist_info["distribution"]
+            else:
+                dist = dist_info
+            train_distributions.append(
+                dist.tolist() if isinstance(dist, np.ndarray) else dist
             )
 
-        # Save as text file
-        with open(save_path, "w", encoding="utf-8") as f:
-            f.write("Client Data Distribution Information\n")
-            f.write("=" * 50 + "\n\n")
-            for data in formatted_data:
-                f.write(f"Client #{data['client_id']}\n")
-                f.write(f"Distribution: {data['distribution']}\n")
-                f.write(f"Percentages: {data['percentages']}\n")
-                f.write(f"Total Samples: {data['total_samples']}\n")
-                f.write("-" * 30 + "\n")
-
-            # Save raw data in JSON format (for program reading)
-            f.write("\nRaw Data (JSON format):\n")
-            json_data = {"data_info": [data["distribution"] for data in formatted_data]}
-            f.write(json.dumps(json_data, indent=2))
-
-        logger.info(f"Data distribution information saved to: {save_path}")
-
-    def save_test_data_info(self, save_path="test_data_info.txt"):
-        """Save test set data distribution information to text file
-
-        Args:
-            save_path: Save path, defaults to 'test_data_info.txt'
-        """
-        # Ensure directory exists
-        os.makedirs(
-            os.path.dirname(save_path) if os.path.dirname(save_path) else ".",
-            exist_ok=True,
-        )
-
-        # Format data
-        formatted_data = []
-        for client_idx, dist in enumerate(self.test_data_info):
-            # Convert NumPy array to normal list and ensure numeric values
-            if isinstance(dist, dict) and "distribution" in dist:
-                dist = dist["distribution"]
-            dist = np.array(dist, dtype=np.float32)
-            client_total = float(np.sum(dist))
-            percentages = [f"{(count/client_total*100):.2f}%" for count in dist]
-
-            formatted_data.append(
-                {
-                    "client_id": client_idx + 1,
-                    "distribution": dist.tolist(),
-                    "percentages": percentages,
-                    "total_samples": client_total,
-                }
+        # Prepare test distributions
+        test_distributions = []
+        for dist_info in self.test_data_info:
+            if isinstance(dist_info, dict) and "distribution" in dist_info:
+                dist = dist_info["distribution"]
+            else:
+                dist = dist_info
+            test_distributions.append(
+                dist.tolist() if isinstance(dist, np.ndarray) else dist
             )
 
-        # Save as text file
+        # Prepare peer communities (keep 0-based indexing internally)
+        peer_communities = []
+        for community in self.peer_communities:
+            community_list = (
+                community.tolist() if isinstance(community, np.ndarray) else community
+            )
+            peer_communities.append(community_list)
+
+        # Prepare metadata
+        metadata = {
+            "num_clients": len(train_distributions),
+            "num_classes": len(train_distributions[0]) if train_distributions else 0,
+            "num_communities": len(peer_communities),
+        }
+
+        # Prepare complete data structure
+        data = {
+            "metadata": metadata,
+            "train_distributions": train_distributions,
+            "test_distributions": test_distributions,
+            "peer_communities": peer_communities,
+        }
+
+        # Write to JSON file
         with open(save_path, "w", encoding="utf-8") as f:
-            f.write("Test Set Data Distribution Information\n")
-            f.write("=" * 50 + "\n\n")
-            for data in formatted_data:
-                f.write(f"Client #{data['client_id']}\n")
-                f.write(f"Distribution: {data['distribution']}\n")
-                f.write(f"Percentages: {data['percentages']}\n")
-                f.write(f"Total Samples: {data['total_samples']}\n")
-                f.write("-" * 30 + "\n")
+            json.dump(data, f, indent=2)
 
-            # Save raw data in JSON format (for program reading)
-            f.write("\nRaw Data (JSON format):\n")
-            json_data = {
-                "test_data_info": [data["distribution"] for data in formatted_data]
-            }
-            f.write(json.dumps(json_data, indent=2))
+        logger.info(f"All clustering results saved to: {save_path}")
 
-        logger.info(f"Test set data distribution information saved to: {save_path}")
-
-    def save_peer_communities(self, save_path="peer_communities.txt"):
-        """Save peer community grouping information to text file
+    def load_cluster_results(self, load_path="peer_communities.json"):
+        """Load all clustering results from a single JSON file
 
         Args:
-            save_path: Save path, defaults to 'peer_communities.txt'
+            load_path: Load path, defaults to 'peer_communities.json'
+
+        Returns:
+            bool: True if loaded successfully, False otherwise
         """
-        # Ensure directory exists
-        os.makedirs(
-            os.path.dirname(save_path) if os.path.dirname(save_path) else ".",
-            exist_ok=True,
-        )
-
-        # Save as text file
-        with open(save_path, "w", encoding="utf-8") as f:
-            f.write("Peer Community Grouping Information\n")
-            f.write("=" * 50 + "\n\n")
-            f.write(f"Total number of communities: {len(self.peer_communities)}\n\n")
-
-            for idx, community in enumerate(self.peer_communities):
-                # Convert NumPy array to normal list
-                community = (
-                    community.tolist()
-                    if isinstance(community, np.ndarray)
-                    else community
-                )
-                # 只在显示时将客户端ID加1
-                display_community = [cid + 1 for cid in community]
-                f.write(f"Community #{idx + 1}\n")
-                f.write(f"Members: {display_community}\n")
-
-                if hasattr(self, "data_info") and self.data_info:
-                    # 使用原始的0基索引访问数据
-                    community_dist = np.sum(
-                        [self.data_info[i]["distribution"] for i in community], axis=0
-                    )
-                    total_samples = np.sum(community_dist)
-                    percentages = [
-                        f"{(count/total_samples*100):.2f}%" for count in community_dist
-                    ]
-
-                    f.write(
-                        f"Community overall distribution: {community_dist.tolist()}\n"
-                    )
-                    f.write(f"Distribution percentages: {percentages}\n")
-                    f.write(f"Total Samples: {total_samples}\n")
-
-                f.write("-" * 30 + "\n")
-
-            # Save raw data in JSON format (for program reading)
-            f.write("\nRaw Data (JSON format):\n")
-            # 将JSON数据中的客户端ID也改为1基索引
-            json_data = {
-                "peer_communities": [
-                    [
-                        cid + 1
-                        for cid in (
-                            comm.tolist() if isinstance(comm, np.ndarray) else comm
-                        )
-                    ]
-                    for comm in self.peer_communities
-                ]
-            }
-            f.write(json.dumps(json_data, indent=2))
-
-        logger.info(f"Peer community grouping information saved to: {save_path}")
-
-    def load_data_info(self, load_path="data_info.txt"):
-        """Load client data distribution information from text file
-
-        Args:
-            load_path: Load path, defaults to 'data_info.txt'
-        """
-        if os.path.exists(load_path):
-            with open(load_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                # Find JSON data section
-                json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                    "\nRaw Data (JSON format):\n"
-                )
-                json_data = json.loads(content[json_start:])
-                self.data_info = json_data["data_info"]
-                logger.info(f"Loaded data distribution information from {load_path}")
-                return True
-        else:
-            logger.warning(f"Data distribution file {load_path} does not exist")
+        if not os.path.exists(load_path):
+            logger.warning(f"Clustering results file {load_path} does not exist")
             return False
 
-    def load_peer_communities(self, load_path="peer_communities.txt"):
-        """Load peer community grouping information from text file
-
-        Args:
-            load_path: Load path, defaults to 'peer_communities.txt'
-        """
-        if os.path.exists(load_path):
+        try:
             with open(load_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                # Find JSON data section
-                json_start = content.find("\nRaw Data (JSON format):\n") + len(
-                    "\nRaw Data (JSON format):\n"
-                )
-                json_data = json.loads(content[json_start:])
-                # 将1基索引转换回0基索引
-                self.peer_communities = [
-                    [cid - 1 for cid in comm] for comm in json_data["peer_communities"]
-                ]
-                logger.info(
-                    f"Loaded peer community grouping information from {load_path}"
-                )
-                return True
-        else:
-            logger.warning(f"Peer community grouping file {load_path} does not exist")
+                data = json.load(f)
+
+            # Load train distributions
+            self.data_info = []
+            for dist in data["train_distributions"]:
+                self.data_info.append({"distribution": np.array(dist)})
+
+            # Load test distributions
+            self.test_data_info = []
+            for dist in data["test_distributions"]:
+                self.test_data_info.append({"distribution": np.array(dist)})
+
+            # Load peer communities
+            self.peer_communities = []
+            for community in data["peer_communities"]:
+                self.peer_communities.append(np.array(community))
+
+            logger.info(f"All clustering results loaded from: {load_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load clustering results from {load_path}: {e}")
             return False
+
+
 
     def _normalize_distributions(self, client_distributions):
         """Normalize client distribution vectors"""
@@ -493,7 +384,6 @@ class FedGS_Splitter(BaseSplitter):
             if total_samples > 0:
                 community_dist = community_dist / total_samples
             community_distributions.append(community_dist)
-        self.save_peer_communities()
         logger.info(
             "\n========== Peer Communities Summary (Improved with Balance-Aware Clustering) =========="
         )
@@ -572,7 +462,6 @@ class FedGS_Splitter(BaseSplitter):
                     self.data_info.append({"distribution": client_dist.copy()})
                 else:
                     self.data_info[client_idx]["distribution"] = client_dist
-            self.save_data_info()
             self.build_peer_communities(client_distributions)
         elif self.call_count == 3:
             # 测试集
@@ -587,8 +476,9 @@ class FedGS_Splitter(BaseSplitter):
                     mask = client_labels == float(label_class)
                     client_dist[label_idx] = np.sum(mask)
                 self.test_data_info.append({"distribution": client_dist.copy()})
-            self.save_test_data_info()
-            logger.info("Test set data distribution has been saved.")
+            # 保存所有聚类结果到单个JSON文件
+            self.save_cluster_results()
+            logger.info("All clustering results have been saved to peer_communities.json.")
         # 第二次调用为验证集，不做特殊处理
 
         if isinstance(dataset, Dataset):
