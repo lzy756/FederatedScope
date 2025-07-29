@@ -29,8 +29,31 @@ from federatedscope.contrib.data.utils import load_cluster_results
 logger = logging.getLogger(__name__)
 
 
-MODEL_UPDATE_TYPE = "model_update"
-MODEL_PARA_TYPE = "model_para"
+MODEL_UPDATE_TYPE = "model_update_type"
+MODEL_PARA_TYPE = "model_param_type"
+
+from collections import OrderedDict
+
+
+def check_tensor_sharing(state_dict1, state_dict2):
+    # 收集所有共享的键（交集）
+    shared_keys = set(state_dict1.keys()) & set(state_dict2.keys())
+    results = OrderedDict()
+
+    # 遍历共享的键，检查Tensor是否共享内存
+    for key in shared_keys:
+        tensor1 = state_dict1[key]
+        tensor2 = state_dict2[key]
+
+        # 确保两者都是Tensor
+        if isinstance(tensor1, torch.Tensor) and isinstance(tensor2, torch.Tensor):
+            # 检查底层数据指针是否相同
+            is_shared = tensor1.data_ptr() == tensor2.data_ptr()
+            results[key] = is_shared
+        else:
+            results[key] = None  # 非Tensor类型标记为None
+
+    return results
 
 
 class MIXServer(Server):
@@ -101,8 +124,8 @@ class MIXServer(Server):
         self.out_type = MODEL_PARA_TYPE  # 发送给客户段的参数类型
         self.in_type = MODEL_PARA_TYPE  # 需要客户端发送的参数类型
 
-        self.intra_round = 4  # 簇内的训练轮数
-        self.inter_round = 1  # 簇间的训练轮数
+        self.intra_round = 1  # 簇内的训练轮数
+        self.inter_round = 0  # 簇间的训练轮数
 
         self._load_and_process_communities()
 
@@ -214,7 +237,6 @@ class MIXServer(Server):
             f"Server: Broadcasting model parameters for round {self.state}, {out_type} -> {in_type}"
         )
         if msg_type == "evaluate":
-            # receiver = self.prev_sample_client_ids
             receiver = list(self.comm_manager.neighbors.keys())  # Send to all clients
             for rcv_idx in receiver:
                 content = None
@@ -280,7 +302,7 @@ class MIXServer(Server):
         self.sample_client_ids = sampled_clients
 
         for client_id in sampled_clients:
-            if self.state == 0 or not hasattr(self, "personalized_slices"):
+            if self.state == 0:
                 # 第一次训练或者没有个性化切片，则发送自身的模型
                 content = self.model.state_dict()
                 self.comm_manager.send(
@@ -289,11 +311,13 @@ class MIXServer(Server):
                         sender=self.ID,
                         receiver=[client_id],
                         state=self.state,
-                        content=(out_type, in_type, content),
+                        content=(MODEL_PARA_TYPE, in_type, content),
                     )
                 )
             else:
                 content = None
+                if client_id in self.personalized_slices:
+                    content = self.personalized_slices[client_id]
                 self.comm_manager.send(
                     Message(
                         msg_type="trigger_train",
@@ -463,12 +487,10 @@ class MIXServer(Server):
             ) in self.selected_clients_per_cluster.items():
                 if cluster_idx in cluster_models:
                     for client_id in cluster_clients:
-                        # 直接引用聚合结果，避免不必要的克隆
+                        self.personalized_slices[client_id] = cluster_models[
+                            cluster_idx
+                        ]["model"]
 
-                        self.personalized_slices[client_id] = copy.deepcopy(
-                            cluster_models[cluster_idx]["model"]
-                        )
-                        # Ensure each client gets a copy
                         logger.info(
                             f"Assigned model from Cluster {cluster_idx} to client {client_id}"
                         )
@@ -482,6 +504,9 @@ class MIXServer(Server):
                     isinstance(content, tuple) and len(content) == 3
                 ), f"Expected content to be a tuple of length 3, got {len(content)}"
                 sample_size, in_type, model_para = content
+                assert (
+                    in_type == self.in_type
+                ), f"Expected in_type to be {self.in_type}, got {in_type}"
                 # 聚合器内部已有安全的tensor处理，无需额外克隆
                 client_info = {
                     "client_id": cid,
@@ -1123,21 +1148,6 @@ class MIXServer(Server):
         return distribution
 
 
-def deepcopy_model_params_dict(model_params):
-    """Deep copy model parameters dictionary
-
-    Args:
-        model_params: Dictionary of model parameters
-
-    Returns:
-        A deep copy of the input dictionary
-    """
-    if not isinstance(model_params, dict):
-        raise TypeError("model_params must be a dictionary")
-
-    return {k: v.detach().clone().cpu() for k, v in model_params.items()}
-
-
 class MIXClient(Client):
     """MIX client implementation"""
 
@@ -1168,8 +1178,7 @@ class MIXClient(Client):
             *args,
             **kwargs,
         )
-
-        self.base_model = self.trainer.get_model_para().copy()  # Base model parameters
+        self.base_model = copy.deepcopy(self.trainer.get_model_para())
 
     def _register_default_handlers(self):
         """覆写默认消息处理函数注册"""
@@ -1198,6 +1207,7 @@ class MIXClient(Client):
 
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters update message"""
+
         round, sender, content = (
             message.state,
             message.sender,
@@ -1208,17 +1218,21 @@ class MIXClient(Client):
             f"Client #{self.ID}: Received model parameters from server for round {round}, {in_type} -> {out_type}"
         )
         if param is not None and in_type == MODEL_UPDATE_TYPE:
-            # 将更新加到base_model上
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.add_(param[param_name].data)
-            self.trainer.update(self.base_model)
+
         elif param is not None and in_type == MODEL_PARA_TYPE:
-            self.trainer.update(param)
+            for param_name, param_base in self.base_model.items():
+                if param_name in param:
+                    param_base.data.copy_(param[param_name].data)
+
+        self.trainer.update(self.base_model)
 
         self.state = round
 
-        sample_size, model_para, results = self.trainer.train()
+        sample_size, _, results = self.trainer.train()
+
         formatted_results = self._monitor.format_eval_res(
             results, rnd=self.state, role="Client #{}".format(self.ID), return_raw=True
         )
@@ -1242,7 +1256,7 @@ class MIXClient(Client):
                 )
             )
         else:
-            model_para_copy = {k: v.detach().clone() for k, v in model_para.items()}
+            model_para_copy = copy.deepcopy(model_para)
             self.comm_manager.send(
                 Message(
                     msg_type="model_para",
@@ -1252,6 +1266,10 @@ class MIXClient(Client):
                     content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
                 )
             )
+
+        for param_name, param_base in self.base_model.items():
+            if param_name in model_para:
+                param_base.data.copy_(model_para[param_name].data)
 
     def callback_funcs_for_update_model(self, message: Message):
         """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""
@@ -1266,16 +1284,12 @@ class MIXClient(Client):
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.add_(param[param_name].data)
-            self.trainer.update(self.base_model)
         else:
-            self.trainer.update(param)
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.copy_(param[param_name].data)
-
+        self.trainer.update(self.base_model)
         self.state = round
-        # 不触发训练
-        logger.debug(f"Client #{self.ID}: Model updated without training")
 
     def callback_funcs_for_trigger_train(self, message: Message):
         """处理来自服务器的训练触发消息"""
@@ -1287,19 +1301,18 @@ class MIXClient(Client):
         )
         # 如果是模型更新，则直接更新模型参数
         if param is not None and in_type == MODEL_UPDATE_TYPE:
-            # 将更新加到base_model上
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.add_(param[param_name].data)
-            self.trainer.update(self.base_model)
+
         elif param is not None and in_type == MODEL_PARA_TYPE:
-            self.trainer.update(param)
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.copy_(param[param_name].data)
+        self.trainer.update(self.base_model)
+
         self.state = round
         sample_size, _, results = self.trainer.train()
-
         # 记录训练结果到日志
         logger.info(
             self._monitor.format_eval_res(
@@ -1312,7 +1325,7 @@ class MIXClient(Client):
 
         model_para = self.trainer.get_model_para()
 
-        if out_type == "model_update":
+        if out_type == MODEL_UPDATE_TYPE:
             model_update = dict()
             for param_name, param_base in self.base_model.items():
                 if param_name in model_para:
@@ -1330,7 +1343,7 @@ class MIXClient(Client):
                 )
             )
         else:
-            model_para_copy = {k: v.detach().clone() for k, v in model_para.items()}
+            model_para_copy = copy.deepcopy(model_para)
             self.comm_manager.send(
                 Message(
                     msg_type="model_para",
@@ -1340,6 +1353,9 @@ class MIXClient(Client):
                     content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
                 )
             )
+        for param_name, param_base in self.base_model.items():
+            if param_name in model_para:
+                param_base.data.copy_(model_para[param_name].data)
 
     def callback_funcs_for_evaluate(self, message: Message):
         """
@@ -1364,10 +1380,10 @@ class MIXClient(Client):
                 self.trainer.update(self.base_model)
             elif param is not None and in_type == MODEL_PARA_TYPE:
                 # 直接更新模型参数
-                self.trainer.update(param)
                 for param_name, param_base in self.base_model.items():
                     if param_name in param:
                         param_base.data.copy_(param[param_name].data)
+                self.trainer.update(self.base_model)
             else:
                 logger.info(
                     f"Client #{self.ID}: No model parameters received for evaluation at round {self.state}"

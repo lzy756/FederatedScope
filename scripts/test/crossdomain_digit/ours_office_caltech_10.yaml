@@ -15,7 +15,7 @@ data:
   consistent_label_distribution: False
   splitter_args: [{'alpha': 0.01}]
 dataloader:
-  batch_size: 64
+  batch_size: 32
 model:
   type: domainnet_resnet10
   in_channels: 3
