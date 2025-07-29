@@ -6,16 +6,16 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 100
-  client_num: 10
+  client_num: 40
   method: mix
-  sample_client_num: 10 # 每轮选取的用户数
+  sample_client_num: 40 # 每轮选取的用户数
 data:
   root: data/office_caltech_10/
-  type: office_caltech10
+  type: office_caltech
   consistent_label_distribution: False
-  splitter_args: [{'alpha': 0.01}]
+  splitter: RESISC45splitter
 dataloader:
-  batch_size: 32
+  batch_size: 64
 model:
   type: domainnet_resnet10
   in_channels: 3
@@ -34,11 +34,12 @@ eval:
   freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
+  count_flops: False
 trainer:
   type: cvtrainer
 aggregator:
-  lambda_: 0.01
-  lr_shared: 0
+  lambda_: 0.005
+  lr_shared: 1
 
-personalization:
-    local_param: ['bn', 'norms']
+# personalization:
+#     local_param: ['bn', 'norms']

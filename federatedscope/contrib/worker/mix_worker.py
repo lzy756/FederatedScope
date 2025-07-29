@@ -35,27 +35,6 @@ MODEL_PARA_TYPE = "model_param_type"
 from collections import OrderedDict
 
 
-def check_tensor_sharing(state_dict1, state_dict2):
-    # 收集所有共享的键（交集）
-    shared_keys = set(state_dict1.keys()) & set(state_dict2.keys())
-    results = OrderedDict()
-
-    # 遍历共享的键，检查Tensor是否共享内存
-    for key in shared_keys:
-        tensor1 = state_dict1[key]
-        tensor2 = state_dict2[key]
-
-        # 确保两者都是Tensor
-        if isinstance(tensor1, torch.Tensor) and isinstance(tensor2, torch.Tensor):
-            # 检查底层数据指针是否相同
-            is_shared = tensor1.data_ptr() == tensor2.data_ptr()
-            results[key] = is_shared
-        else:
-            results[key] = None  # 非Tensor类型标记为None
-
-    return results
-
-
 class MIXServer(Server):
     """
     MIX server implementation with key features:
@@ -124,8 +103,8 @@ class MIXServer(Server):
         self.out_type = MODEL_PARA_TYPE  # 发送给客户段的参数类型
         self.in_type = MODEL_PARA_TYPE  # 需要客户端发送的参数类型
 
-        self.intra_round = 1  # 簇内的训练轮数
-        self.inter_round = 0  # 簇间的训练轮数
+        self.intra_round = 2  # 簇内的训练轮数
+        self.inter_round = 1  # 簇间的训练轮数
 
         self._load_and_process_communities()
 
@@ -487,12 +466,8 @@ class MIXServer(Server):
             ) in self.selected_clients_per_cluster.items():
                 if cluster_idx in cluster_models:
                     for client_id in cluster_clients:
-                        self.personalized_slices[client_id] = cluster_models[
-                            cluster_idx
-                        ]["model"]
-
-                        logger.info(
-                            f"Assigned model from Cluster {cluster_idx} to client {client_id}"
+                        self.personalized_slices[client_id] = copy.deepcopy(
+                            cluster_models[cluster_idx]["model"]
                         )
 
         # model_para: Inter-cluster aggregation using trace-norm regularization
@@ -1218,16 +1193,17 @@ class MIXClient(Client):
             f"Client #{self.ID}: Received model parameters from server for round {round}, {in_type} -> {out_type}"
         )
         if param is not None and in_type == MODEL_UPDATE_TYPE:
+            new_param = {}
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
-                    param_base.data.add_(param[param_name].data)
+                    new_param[param_name] = param_base.data + param[param_name].data
+            self.trainer.update(new_param)
 
         elif param is not None and in_type == MODEL_PARA_TYPE:
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.copy_(param[param_name].data)
-
-        self.trainer.update(self.base_model)
+            self.trainer.update(self.base_model)
 
         self.state = round
 
@@ -1267,9 +1243,9 @@ class MIXClient(Client):
                 )
             )
 
-        for param_name, param_base in self.base_model.items():
-            if param_name in model_para:
-                param_base.data.copy_(model_para[param_name].data)
+        # for param_name, param_base in self.base_model.items():
+        #     if param_name in model_para:
+        #         param_base.data.copy_(model_para[param_name].data)
 
     def callback_funcs_for_update_model(self, message: Message):
         """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""
@@ -1280,15 +1256,16 @@ class MIXClient(Client):
         )
         # 如果是模型更新，则直接更新模型参数
         if in_type == MODEL_UPDATE_TYPE:
-            # 将更新加到base_model上
+            new_param = {}
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
-                    param_base.data.add_(param[param_name].data)
+                    new_param[param_name] = param_base.data + param[param_name].data
+            self.trainer.update(new_param)
         else:
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.copy_(param[param_name].data)
-        self.trainer.update(self.base_model)
+            self.trainer.update(self.base_model)
         self.state = round
 
     def callback_funcs_for_trigger_train(self, message: Message):
@@ -1301,17 +1278,20 @@ class MIXClient(Client):
         )
         # 如果是模型更新，则直接更新模型参数
         if param is not None and in_type == MODEL_UPDATE_TYPE:
+            new_param = {}
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
-                    param_base.data.add_(param[param_name].data)
+                    new_param[param_name] = param_base.data + param[param_name].data
+            self.trainer.update(new_param)
 
         elif param is not None and in_type == MODEL_PARA_TYPE:
             for param_name, param_base in self.base_model.items():
                 if param_name in param:
                     param_base.data.copy_(param[param_name].data)
-        self.trainer.update(self.base_model)
+            self.trainer.update(self.base_model)
 
         self.state = round
+
         sample_size, _, results = self.trainer.train()
         # 记录训练结果到日志
         logger.info(
@@ -1353,9 +1333,6 @@ class MIXClient(Client):
                     content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
                 )
             )
-        for param_name, param_base in self.base_model.items():
-            if param_name in model_para:
-                param_base.data.copy_(model_para[param_name].data)
 
     def callback_funcs_for_evaluate(self, message: Message):
         """
@@ -1373,11 +1350,11 @@ class MIXClient(Client):
                 f"Client #{self.ID}: Received model parameters for evaluation at round {self.state}, {in_type} -> {out_type}"
             )
             if param is not None and in_type == MODEL_UPDATE_TYPE:
-                # 将更新加到base_model上
+                new_param = {}
                 for param_name, param_base in self.base_model.items():
                     if param_name in param:
-                        param_base.data.add_(param[param_name].data)
-                self.trainer.update(self.base_model)
+                        new_param[param_name] = param_base.data + param[param_name].data
+                self.trainer.update(new_param)
             elif param is not None and in_type == MODEL_PARA_TYPE:
                 # 直接更新模型参数
                 for param_name, param_base in self.base_model.items():
