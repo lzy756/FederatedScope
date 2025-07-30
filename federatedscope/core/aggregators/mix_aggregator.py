@@ -87,10 +87,6 @@ class MIXAggregator(ClientsAvgAggregator):
                     if layer_name in model["model_para"]
                 ]
                 if layer_vectors:
-                    # aggregated_model[layer_name] = torch.mean(
-                    #     torch.stack(layer_vectors), dim=0
-                    # ).reshape(aggregated_model[layer_name].shape)
-
                     # 根据weights_on_samples计算加权平均
                     weighted_sum = sum(
                         weight * vec
@@ -170,6 +166,19 @@ class MIXAggregator(ClientsAvgAggregator):
 
         # 转换为numpy数组
         updates_np = [vec.detach().cpu().numpy() for vec in normalized_vectors]
+        from scipy.spatial.distance import cosine
+
+        pairwise_sims = []
+        for i in range(N):
+            for j in range(i + 1, N):
+                sim = cosine(updates_np[i], updates_np[j])
+                pairwise_sims.append(sim)
+        avg_similarity = np.mean(pairwise_sims) if pairwise_sims else 0.0
+        max_similarity = max(pairwise_sims) if pairwise_sims else 0.0
+        min_similarity = min(pairwise_sims) if pairwise_sims else 0.0
+        logger.info(
+            f"Pairwise similarities: avg={avg_similarity:.4f}, max={max_similarity:.4f}, min={min_similarity:.4f}"
+        )
 
         def objective(u):
             """目标函数：最小化加权和的L2范数平方"""
@@ -180,6 +189,9 @@ class MIXAggregator(ClientsAvgAggregator):
 
         # 初始权重（均匀分布）
         u0 = np.ones(N) / N
+        u0 += np.random.normal(0, 0.05, N)  # 添加小扰动
+        u0 = np.clip(u0, 0.05, 0.95)  # 确保初始权重在0-1范围内
+        u0 /= np.sum(u0)  # 确保初始权重和为1
 
         # 约束配置：权重和为1（等式约束）
         constraints = [{"type": "eq", "fun": lambda u: np.sum(u) - 1.0}]
@@ -193,7 +205,7 @@ class MIXAggregator(ClientsAvgAggregator):
                 method="SLSQP",
                 bounds=bounds,
                 constraints=constraints,
-                options={"maxiter": 500, "ftol": 1e-8},
+                options={"maxiter": 500, "ftol": 1e-6, "disp": True},
             )
 
             if result.success:

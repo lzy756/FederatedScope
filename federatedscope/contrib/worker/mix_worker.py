@@ -103,8 +103,8 @@ class MIXServer(Server):
         self.out_type = MODEL_PARA_TYPE  # 发送给客户段的参数类型
         self.in_type = MODEL_PARA_TYPE  # 需要客户端发送的参数类型
 
-        self.intra_round = 2  # 簇内的训练轮数
-        self.inter_round = 1  # 簇间的训练轮数
+        self.intra_round = config.aggregator.get("intra_round", 1)  # 簇内的训练轮数
+        self.inter_round = config.aggregator.get("inter_round", 2)  # 簇间的训练轮数
 
         self._load_and_process_communities()
 
@@ -1242,10 +1242,6 @@ class MIXClient(Client):
                     content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
                 )
             )
-
-        # for param_name, param_base in self.base_model.items():
-        #     if param_name in model_para:
-        #         param_base.data.copy_(model_para[param_name].data)
 
     def callback_funcs_for_update_model(self, message: Message):
         """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""

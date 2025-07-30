@@ -13,7 +13,7 @@ def extend_aggregator_cfg(cfg):
     #  to tests/test_robust_aggregators.py
     # ---------------------------------------------------------------------- #
     cfg.aggregator = CN()
-    cfg.aggregator.robust_rule = 'fedavg'
+    cfg.aggregator.robust_rule = "fedavg"
     cfg.aggregator.byzantine_node_num = 0
     cfg.aggregator.BFT_args = CN(new_allowed=True)
 
@@ -26,6 +26,8 @@ def extend_aggregator_cfg(cfg):
     # For FedSAK method
     cfg.aggregator.lambda_ = 1e-3
     cfg.aggregator.lr_shared = 0.1
+    cfg.aggregator.intra_round = 1
+    cfg.aggregator.inter_round = 1
     cfg.aggregator.filter_keys = []
 
     # --------------- register corresponding check function ----------
@@ -34,12 +36,17 @@ def extend_aggregator_cfg(cfg):
 
 def assert_aggregator_cfg(cfg):
 
-    if cfg.aggregator.byzantine_node_num == 0 and \
-            cfg.aggregator.robust_rule in \
-            ['krum', 'normbounding', 'median', 'trimmedmean', 'bulyan']:
+    if cfg.aggregator.byzantine_node_num == 0 and cfg.aggregator.robust_rule in [
+        "krum",
+        "normbounding",
+        "median",
+        "trimmedmean",
+        "bulyan",
+    ]:
         logging.warning(
-            f'Although {cfg.aggregator.robust_rule} aggregtion rule is '
-            'applied, we found that cfg.aggregator.byzantine_node_num == 0')
+            f"Although {cfg.aggregator.robust_rule} aggregtion rule is "
+            "applied, we found that cfg.aggregator.byzantine_node_num == 0"
+        )
 
 
-register_config('aggregator', extend_aggregator_cfg)
+register_config("aggregator", extend_aggregator_cfg)

@@ -5,10 +5,10 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 100
+  total_round_num: 400
   client_num: 40
   method: mix
-  sample_client_num: 40 # 每轮选取的用户数
+  sample_client_num: 20 # 每轮选取的用户数
 data:
   root: data/office_caltech_10/
   type: office_caltech
@@ -17,7 +17,7 @@ data:
 dataloader:
   batch_size: 64
 model:
-  type: domainnet_resnet10
+  type: cross_domain_digit_cnn
   in_channels: 3
   out_channels: 100
 train:
@@ -38,8 +38,10 @@ eval:
 trainer:
   type: cvtrainer
 aggregator:
-  lambda_: 0.005
+  lambda_: 0.01
   lr_shared: 1
+  intra_round: 4
+  inter_round: 1
 
 # personalization:
 #     local_param: ['bn', 'norms']
