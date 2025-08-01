@@ -10,17 +10,18 @@ logger = logging.getLogger(__name__)
 
 
 class RESISC45Splitter(BaseSplitter):
-    def __init__(self, client_num, **kwargs):
-        super(RESISC45Splitter, self).__init__(client_num, **kwargs)
+    def __init__(self, client_num):
+        super(RESISC45Splitter, self).__init__(client_num)
 
     def __call__(self, dataset, *args, **kwargs):
         """
-        为每个客户端分配随机的2个类别数据。允许数据在客户端之间重复。
-        RESISC45有45个类别，为每个客户端分配2个类别。
+        为每个客户端分配随机的类别数据。允许数据在客户端之间重复。
+        RESISC45有45个类别，可以通过kwargs指定每个客户端分配的类别数量。
 
         Args:
             dataset: 原始数据集的一个分区 (例如，训练集、验证集或测试集)，
                      它应该是一个 torch.utils.data.Dataset 实例。
+            kwargs: 可选参数，包括 'classes_per_client'，用于指定每个客户端分配的类别数量。
 
         Returns:
             list: 每个元素是一个 torch.utils.data.Subset 对象，代表分配给一个客户端的数据。
@@ -55,8 +56,10 @@ class RESISC45Splitter(BaseSplitter):
         unique_classes = list(set(labels))
         total_classes = len(unique_classes)
 
-        # 确保每个客户端分配的类别数不超过总类别数
-        classes_per_client = min(2, total_classes)
+        # 从kwargs获取每个客户端分配的类别数量，默认为2
+        # client_num = kwargs.get("client_num", self.client_num)
+        classes_per_client = kwargs.get("classes_per_client", 2)
+        classes_per_client = min(classes_per_client, total_classes)
 
         # 为每个客户端选择类别
         client_selected_classes_list = []

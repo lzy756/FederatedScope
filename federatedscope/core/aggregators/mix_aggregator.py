@@ -297,6 +297,10 @@ class MIXAggregator(ClientsAvgAggregator):
                 Vh_eff = Vh[:rank, :]
                 grad = U_eff @ Vh_eff  # 这确实是 U × V^T 的结果
 
+                # 输出grad每行的范数
+                grad_norms = torch.norm(grad, dim=1)
+                logger.info(f"Layer {layer} gradient norms: {grad_norms}")
+
                 # 更新参数
                 W_new = W - self.lambda_ * grad
 

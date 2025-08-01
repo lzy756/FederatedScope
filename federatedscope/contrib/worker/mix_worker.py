@@ -460,15 +460,17 @@ class MIXServer(Server):
                     }
 
             self.personalized_slices = {}  # Reset personalized slices for this round
-            for (
-                cluster_idx,
-                cluster_clients,
-            ) in self.selected_clients_per_cluster.items():
-                if cluster_idx in cluster_models:
-                    for client_id in cluster_clients:
+            for i, pc in enumerate(self.peer_communities):
+                if not pc:  # Skip empty peer communities
+                    continue
+                if i in cluster_models:
+                    for client_id in pc:
                         self.personalized_slices[client_id] = copy.deepcopy(
-                            cluster_models[cluster_idx]["model"]
+                            cluster_models[i]["model"]
                         )
+            logger.info(
+                f"Server: Intra-cluster aggregation completed, {len(self.personalized_slices)} personalized slices created"
+            )
 
         # model_para: Inter-cluster aggregation using trace-norm regularization
         if self.in_type == MODEL_PARA_TYPE:

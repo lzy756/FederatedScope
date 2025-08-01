@@ -6,222 +6,20 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder, DatasetFolder
 from sklearn.cluster import DBSCAN
 from scipy.stats import entropy
-
+from federatedscope.core.auxiliaries.splitter_builder import get_splitter
 from federatedscope.core.data import BaseDataTranslator
 from federatedscope.register import register_data
 from federatedscope.core.data import ClientData, StandaloneDataDict
 from federatedscope.contrib.data.utils import (
-    dirichlet_split,
     get_label_distribution,
     adaptive_cluster_clients,
     save_cluster_results,
     uniform_split,
-    normalize_distributions,
-    js_divergence,
-    compute_jsd_matrix,
 )
+from torch.utils.data import ConcatDataset, Subset
+import numpy as np
 
 logger = logging.getLogger(__name__)
-
-
-##########################
-# 聚类相关函数（参考cross_domain_digits.py）
-##########################
-
-
-# def get_label_distribution(subsets: list, num_classes=10):
-#     """
-#     计算每个子集的标签分布
-#     :param subsets: list of Subset objects or datasets
-#     :param num_classes: number of classes in the dataset
-#     :return: list of distributions for each subset
-#     """
-#     distributions = []
-#     for subset in subsets:
-#         labels = []
-#         # 获取标签
-#         if hasattr(subset, "dataset"):
-#             # 如果是Subset对象
-#             for idx in subset.indices:
-#                 _, label = subset.dataset[idx]
-#                 labels.append(label)
-#         else:
-#             # 如果是普通dataset
-#             for i in range(len(subset)):
-#                 _, label = subset[i]
-#                 labels.append(label)
-
-#         labels = np.array(labels)
-#         dist = np.zeros(num_classes, dtype=int)
-#         for label in labels:
-#             dist[label] += 1
-#         distributions.append(dist)
-#     return distributions
-
-
-# def normalize_distributions(distributions: list):
-#     """标准化分布"""
-#     normalized = []
-#     for dist in distributions:
-#         s = np.sum(dist)
-#         if s > 0:
-#             normalized.append(dist / s)
-#         else:
-#             normalized.append(dist)
-#     return np.array(normalized)
-
-
-# def js_divergence(p, q):
-#     """计算Jensen-Shannon散度"""
-#     # 平滑处理避免log(0)
-#     p = np.array(p) + 1e-10
-#     q = np.array(q) + 1e-10
-#     p /= p.sum()
-#     q /= q.sum()
-
-#     # 计算混合分布
-#     m = 0.5 * (p + q)
-
-#     # JS散度 = (KL(P||M) + KL(Q||M))/2
-#     return 0.5 * (entropy(p, m) + entropy(q, m))
-
-
-# def compute_jsd_matrix(norm_dists):
-#     """计算Jensen-Shannon散度距离矩阵"""
-#     n = len(norm_dists)
-#     jsd_matrix = np.zeros((n, n))
-
-#     for i in range(n):
-#         for j in range(i + 1, n):
-#             # 计算JSD(P||Q) = √[JSD(P||Q)] (确保度量满足三角不等式)
-#             jsd_matrix[i, j] = jsd_matrix[j, i] = np.sqrt(
-#                 js_divergence(norm_dists[i], norm_dists[j])
-#             )
-#     return jsd_matrix
-
-
-# def adaptive_cluster_clients(
-#     train_distributions,
-#     target_avg_size=4,  # 每个簇平均包含的用户数
-#     min_threshold=0.01,  # 最小阈值
-#     max_threshold=1.0,  # 最大阈值
-#     max_iter=15,  # 最大迭代次数
-#     tolerance=1,  # 簇大小容忍范围
-# ):
-#     """
-#     自适应调整阈值的聚类算法
-#     """
-#     n_clients = len(train_distributions)
-#     target_clusters = max(1, n_clients // target_avg_size)  # 目标簇数
-#     norm_dists = normalize_distributions(train_distributions)
-#     jsd_matrix = compute_jsd_matrix(norm_dists)
-
-#     logger.info(
-#         f"开始自适应聚类: {n_clients}个客户端, 目标平均簇大小: {target_avg_size}, 目标簇数: {target_clusters}"
-#     )
-
-#     # 使用二分搜索自动调整阈值
-#     low, high = min_threshold, max_threshold
-#     best_jsd_threshold = low
-#     best_clusters = None
-
-#     for i in range(max_iter):
-#         mid_jsd = (low + high) / 2
-#         logger.info(
-#             f"迭代#{i+1}: 尝试阈值 {mid_jsd:.4f} (范围 [{low:.4f}, {high:.4f}])"
-#         )
-
-#         clustering = DBSCAN(
-#             eps=mid_jsd, min_samples=1, metric="precomputed"  # 单个样本可成簇
-#         )
-#         cluster_labels = clustering.fit_predict(jsd_matrix)
-#         num_clusters = len(np.unique(cluster_labels))
-
-#         # 计算实际平均簇大小
-#         cluster_sizes = [
-#             np.sum(cluster_labels == label) for label in np.unique(cluster_labels)
-#         ]
-#         avg_cluster_size = np.mean(cluster_sizes) if num_clusters > 0 else 0
-
-#         # 记录最佳结果
-#         if best_clusters is None or abs(avg_cluster_size - target_avg_size) < tolerance:
-#             best_jsd_threshold = mid_jsd
-#             best_clusters = cluster_labels
-#             best_size = avg_cluster_size
-#             best_count = num_clusters
-
-#         logger.info(f"结果: {num_clusters}个簇, 平均大小: {avg_cluster_size:.2f}")
-
-#         # 检查是否达到目标范围
-#         if abs(avg_cluster_size - target_avg_size) <= tolerance:
-#             logger.info(
-#                 f"找到合适阈值: {mid_jsd:.4f}, 簇数: {num_clusters}, 平均大小: {avg_cluster_size:.2f}"
-#             )
-#             break
-
-#         # 调整搜索范围
-#         if avg_cluster_size > target_avg_size:
-#             # 簇数过少，需要减少阈值使得簇数更多
-#             high = mid_jsd
-#         else:
-#             # 簇数过多，需要增加阈值使得簇数更少
-#             low = mid_jsd
-
-#         # 检查收敛
-#         if high - low < 0.001:
-#             logger.info(
-#                 f"达到收敛: 最佳阈值 {best_jsd_threshold:.4f}, 簇数: {best_count}, 平均大小: {best_size:.2f}"
-#             )
-#             break
-#     else:
-#         logger.warning(
-#             f"达到最大迭代次数 {max_iter}，使用最佳结果: 阈值 {best_jsd_threshold:.4f}"
-#         )
-
-#     # 构建社区结构
-#     peer_communities = []
-#     for label in np.unique(best_clusters):
-#         community = np.where(best_clusters == label)[0]
-#         peer_communities.append(community.tolist())
-
-#     # 记录最终簇大小分布
-#     cluster_sizes = [len(c) for c in peer_communities]
-#     logger.info(
-#         f"聚类完成: {len(peer_communities)}个簇, 平均大小: {np.mean(cluster_sizes):.2f}, "
-#         f"最小: {np.min(cluster_sizes)}, 最大: {np.max(cluster_sizes)}"
-#     )
-
-#     return peer_communities
-
-
-# def save_cluster_results(filename, train_dists, test_dists, communities):
-#     """保存聚类结果到JSON文件"""
-#     # 准备可JSON序列化的数据结构
-#     data = {
-#         "metadata": {
-#             "num_clients": len(train_dists),
-#             "num_classes": len(train_dists[0]),
-#             "num_communities": len(communities),
-#         },
-#         "train_distributions": [
-#             dist.tolist() if isinstance(dist, np.ndarray) else dist
-#             for dist in train_dists
-#         ],
-#         "test_distributions": [
-#             dist.tolist() if isinstance(dist, np.ndarray) else dist
-#             for dist in test_dists
-#         ],
-#         "peer_communities": [
-#             community.tolist() if isinstance(community, np.ndarray) else community
-#             for community in communities
-#         ],
-#     }
-
-#     # 写入文件
-#     with open(filename, "w") as f:
-#         json.dump(data, f, indent=2)
-
-#     logger.info(f"聚类结果保存成功！文件: {filename}")
 
 
 class ImageFolder_Custom(DatasetFolder):
@@ -237,7 +35,7 @@ class ImageFolder_Custom(DatasetFolder):
         train=True,
         transform=None,
         target_transform=None,
-        subset_train_num=7,
+        subset_train_num=4,
         subset_capacity=10,
     ):
         self.data_name = data_name
@@ -327,7 +125,13 @@ def _load_domain_dataset(data_name, data_root, train_transform, test_transform):
 
 
 def _create_federated_data_dict(
-    config, client_cfgs, train_dataset, test_dataset, domain_name
+    config,
+    client_cfgs,
+    train_dataset,
+    test_dataset,
+    domain_name,
+    client_num=10,
+    classes_per_client=2,
 ):
     """
     Create federated data dictionary for a single domain dataset
@@ -344,17 +148,35 @@ def _create_federated_data_dict(
     """
     # Create temporary config for this domain (10 clients)
     tmp_config = config.clone()
-    tmp_config.merge_from_list(["federate.client_num", 10])
+    tmp_config.merge_from_list(["federate.client_num", client_num])
 
     # Use BaseDataTranslator to convert to federated format
-    translator = BaseDataTranslator(tmp_config, client_cfgs)
-
-    # Create dataset tuple (train, val, test) - using test for both val and test
-    split_datasets = (train_dataset, test_dataset, test_dataset)
-    data_dict = translator(split_datasets)
+    # translator = BaseDataTranslator(tmp_config, client_cfgs)
+    splitter = get_splitter(tmp_config)
+    if splitter is None:
+        raise ValueError(f"Splitter not found for {domain_name}")
+    train_data_lists = splitter(train_dataset, classes_per_client=classes_per_client)
+    test_data_lists = splitter(test_dataset, classes_per_client=classes_per_client)
+    # test_data_indices = uniform_split(test_dataset, client_num)
+    # test_data_lists = [Subset(test_dataset, indices) for indices in test_data_indices]
+    data_dict = {
+        client_id: ClientData(
+            tmp_config,
+            train=train_data_lists[client_id - 1],
+            val=test_data_lists[client_id - 1],
+            test=test_data_lists[client_id - 1],
+        )
+        for client_id in range(1, client_num + 1)
+    }
+    data_dict[0] = ClientData(
+        tmp_config,
+        train=train_dataset,
+        val=test_dataset,
+        test=test_dataset,
+    )  # Server data
 
     logger.info(
-        f"Successfully created federated {domain_name} dataset with {len(data_dict) - 1} clients"
+        f"Successfully created federated {domain_name} dataset with {len(data_dict)} clients"
     )
     return data_dict
 
@@ -370,7 +192,6 @@ def _merge_data_dictionaries(config, data_dicts):
     Returns:
         StandaloneDataDict: Merged federated data dictionary
     """
-    from torch.utils.data import ConcatDataset
 
     total_clients = len(data_dicts) * 10  # Each dict has 10 clients
 
@@ -390,14 +211,28 @@ def _merge_data_dictionaries(config, data_dicts):
     )
 
     # Add clients from each data dictionary with proper ID offset
-    for dict_idx, data_dict in enumerate(data_dicts):
-        client_id_offset = dict_idx * 10  # 0, 10, 20, 30
-        for client_id in range(1, 11):
-            new_client_id = client_id + client_id_offset
-            merged_data_dict[new_client_id] = data_dict[client_id]
-            # Update client configuration to merged config
-            merged_data_dict[new_client_id].setup(tmp_config_merged)
+    cnt = 1
+    for data_dict in data_dicts:
+        for client_id, client_data in data_dict.items():
+            if client_id == 0:
+                continue
+            if cnt not in merged_data_dict:
+                merged_data_dict[cnt] = ClientData(
+                    tmp_config_merged,
+                    train=client_data.train_data,
+                    val=client_data.val_data,
+                    test=client_data.test_data,
+                )
+            cnt += 1
 
+    logger.info(f"Merged data dictionary created with {len(merged_data_dict)} clients")
+    # 输出每个客户端训练集和测试集的大小
+    for client_id, client_data in merged_data_dict.items():
+        train_size = len(client_data.train_data) if client_data.train_data else 0
+        test_size = len(client_data.test_data) if client_data.test_data else 0
+        logger.info(
+            f"Client {client_id}: train size={train_size}, test size={test_size}"
+        )
     # Create final StandaloneDataDict
     return StandaloneDataDict(merged_data_dict, tmp_config_merged)
 
@@ -493,8 +328,13 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     # Load all domain datasets
     domain_names = ["caltech", "amazon", "webcam", "dslr"]
     data_dicts = []
+    # client_nums = [8, 8, 4, 4]
+    clients_per_domain = [9, 9, 1, 1]
+    classes_per_client_per_domain = [2, 2, 10, 10]
 
-    for domain_name in domain_names:
+    for domain_name, client_num, classes_per_client in zip(
+        domain_names, clients_per_domain, classes_per_client_per_domain
+    ):
         # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
             domain_name, data_root, train_transform, test_transform
@@ -502,7 +342,13 @@ def load_office_caltech_dataset(config, client_cfgs=None):
 
         # Create federated data dictionary for this domain
         data_dict = _create_federated_data_dict(
-            config, client_cfgs, train_dataset, test_dataset, domain_name
+            config,
+            client_cfgs,
+            train_dataset,
+            test_dataset,
+            domain_name,
+            client_num,
+            classes_per_client,
         )
         data_dicts.append(data_dict)
 
