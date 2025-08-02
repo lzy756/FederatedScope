@@ -24,103 +24,82 @@ logger = logging.getLogger(__name__)
 
 class ImageFolder_Custom(DatasetFolder):
     """
-    Custom ImageFolder implementation based on RethinkFL's officecaltech.py
-    Supports train/test split based on subset sampling for Caltech dataset
+    Custom ImageFolder implementation for Office Caltech dataset.
+    Loads all data without splitting into train/test subsets.
     """
 
-    def __init__(
-        self,
-        data_name,
-        root,
-        train=True,
-        transform=None,
-        target_transform=None,
-        subset_train_num=4,
-        subset_capacity=10,
-    ):
-        self.data_name = data_name
+    def __init__(self, domain_name, root, transform=None):
+        self.domain_name = domain_name
         self.root = root
-        self.train = train
         self.transform = transform
-        self.target_transform = target_transform
 
-        # Build the path to the Caltech dataset
-        dataset_path = os.path.join(self.root, "Office_Caltech_10", self.data_name)
+        # Build the path to the Office Caltech dataset
+        dataset_path = os.path.join(self.root, "Office_Caltech_10", self.domain_name)
         if not os.path.exists(dataset_path):
             # Fallback to direct domain name path
-            dataset_path = os.path.join(self.root, self.data_name)
+            dataset_path = os.path.join(self.root, self.domain_name)
 
-        self.imagefolder_obj = ImageFolder(
-            dataset_path, self.transform, self.target_transform
-        )
-
-        all_data = self.imagefolder_obj.samples
-        self.train_index_list = []
-        self.test_index_list = []
-
-        # Split data based on subset sampling strategy from RethinkFL
-        for i in range(len(all_data)):
-            if i % subset_capacity <= subset_train_num:
-                self.train_index_list.append(i)
-            else:
-                self.test_index_list.append(i)
+        self.imagefolder_obj = ImageFolder(dataset_path, self.transform)
+        self.all_data = self.imagefolder_obj.samples
 
     def __len__(self):
-        if self.train:
-            return len(self.train_index_list)
-        else:
-            return len(self.test_index_list)
+        return len(self.all_data)
 
     def __getitem__(self, index):
-        if self.train:
-            used_index_list = self.train_index_list
-        else:
-            used_index_list = self.test_index_list
-
-        path = self.imagefolder_obj.samples[used_index_list[index]][0]
-        target = self.imagefolder_obj.samples[used_index_list[index]][1]
+        path = self.all_data[index][0]
+        target = self.all_data[index][1]
         target = int(target)
         img = self.imagefolder_obj.loader(path)
 
         if self.transform is not None:
             img = self.transform(img)
-        if self.target_transform is not None:
-            target = self.target_transform(target)
 
         return img, target
 
 
-def _load_domain_dataset(data_name, data_root, train_transform, test_transform):
+def _load_domain_dataset(
+    domain_name, data_root, train_transform, test_transform, train_ratio=0.4
+):
     """
-    Load a single domain dataset (caltech, amazon, webcam, or dslr)
+    Load a single domain dataset (caltech, amazon, webcam, or dslr) and split into train/test sets.
 
     Args:
-        data_name: Name of the domain dataset
+        domain_name: Name of the domain dataset
         data_root: Root directory for data
         train_transform: Transform for training data
         test_transform: Transform for test data
+        train_ratio: Ratio of data to use for training
 
     Returns:
         tuple: (train_dataset, test_dataset)
     """
     try:
-        # Create train dataset
-        train_dataset = ImageFolder_Custom(
-            data_name=data_name, root=data_root, train=True, transform=train_transform
-        )
+        # Load all data
+        dataset = ImageFolder_Custom(domain_name=domain_name, root=data_root)
 
-        # Create test dataset
-        test_dataset = ImageFolder_Custom(
-            data_name=data_name, root=data_root, train=False, transform=test_transform
-        )
+        # Randomly shuffle data indices
+        all_data = dataset.all_data
+        indices = np.arange(len(all_data))
+        np.random.shuffle(indices)
+
+        # Split data into train and test sets
+        train_size = int(len(all_data) * train_ratio)
+        train_indices = indices[:train_size]
+        test_indices = indices[train_size:]
+
+        train_dataset = Subset(dataset, train_indices)
+        train_dataset.dataset.transform = train_transform
+
+        test_dataset = Subset(dataset, test_indices)
+        test_dataset.dataset.transform = test_transform
 
         logger.info(
-            f"Loaded {data_name} dataset: train={len(train_dataset)}, test={len(test_dataset)}"
+            f"Loaded {domain_name} dataset: train={len(train_dataset)}, test={len(test_dataset)}"
         )
         return train_dataset, test_dataset
 
     except Exception as e:
-        logger.error(f"Failed to load {data_name} dataset: {e}")
+        logger.error(f"Failed to load {domain_name} dataset: {e}")
         raise e
 
 
@@ -295,7 +274,7 @@ def _perform_clustering_analysis(data_dict, data_root):
 
 def load_office_caltech_dataset(config, client_cfgs=None):
     """
-    Load Office Caltech dataset for federated learning based on RethinkFL implementation
+    Load Office Caltech dataset for federated learning.
 
     Args:
         config: Configuration object containing data settings
@@ -306,38 +285,42 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     """
     data_root = config.data.root
 
-    # Define data transforms from RethinkFL
-    train_transform = transforms.Compose(
+    # Define data transforms specific to Office Caltech
+    transform_train = transforms.Compose(
         [
-            transforms.Resize((32, 32)),
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
+            transforms.Resize((256, 256)),
+            transforms.RandomCrop((224, 224)),
+            transforms.RandomHorizontalFlip(p=0.5),
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+            ),
         ]
     )
 
-    test_transform = transforms.Compose(
+    transform_test = transforms.Compose(
         [
-            transforms.Resize((32, 32)),
+            transforms.Resize((256, 256)),
+            transforms.CenterCrop((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
 
     # Load all domain datasets
     domain_names = ["caltech", "amazon", "webcam", "dslr"]
+    clients_per_domain = config.data.clients_per_domain
+    classes_per_client_per_domain = config.data.classes_per_client_per_domain
+    train_ratio = config.data.splits[0]
+
     data_dicts = []
-    # client_nums = [8, 8, 4, 4]
-    clients_per_domain = [9, 9, 1, 1]
-    classes_per_client_per_domain = [2, 2, 10, 10]
 
     for domain_name, client_num, classes_per_client in zip(
         domain_names, clients_per_domain, classes_per_client_per_domain
     ):
         # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
-            domain_name, data_root, train_transform, test_transform
+            domain_name, data_root, transform_train, transform_test, train_ratio
         )
 
         # Create federated data dictionary for this domain
@@ -361,9 +344,9 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     return merged_data_dict, config
 
 
-def call_caltech_data(config, client_cfgs=None):
+def call_office_caltech_data(config, client_cfgs=None):
     """
-    Entry point for Caltech dataset registration.
+    Entry point for Office Caltech dataset registration.
 
     Args:
         config: Configuration object
@@ -373,10 +356,10 @@ def call_caltech_data(config, client_cfgs=None):
         tuple: (datadict, config) if dataset type matches, None otherwise
     """
     if config.data.type.lower() == "office_caltech":
-        logger.info("Loading Caltech dataset...")
+        logger.info("Loading Office Caltech dataset...")
         return load_office_caltech_dataset(config, client_cfgs)
     return None
 
 
-# Register the Caltech dataset
-register_data("office_caltech", call_caltech_data)
+# Register the Office Caltech dataset
+register_data("office_caltech", call_office_caltech_data)

@@ -263,50 +263,69 @@ class MIXAggregator(ClientsAvgAggregator):
                 logger.info(f"Processing layer: {layer}")
                 if not all(layer in params for params in model_params):
                     logger.info(f"Layer {layer} missing in some models")
-                    # 如果某个组没有此层，保留原参数（创建副本）
                     for idx in range(n_client):
                         if layer in model_params[idx]:
                             updated_dicts[idx][layer] = (
                                 model_params[idx][layer].detach().clone()
                             )
                     continue
-                shapes = [params[layer].shape for params in model_params]
-                W = torch.stack([params[layer].flatten() for params in model_params], 0)
-                # SVD分解
-                U, S, Vh = torch.linalg.svd(W, full_matrices=False)
 
-                # 正确的trace-norm次梯度计算
-                # trace-norm的次梯度: 对于满秩情况，次梯度就是 U @ Vh
-                # 但我们需要处理数值稳定性问题
+                layer_params = [params[layer] for params in model_params]
+                original_shapes = [p.shape for p in layer_params]
+                # 堆叠为张量（维度：[n_client] + 原始参数维度）
+                # 例如：若单客户端参数为(d1, d2)，堆叠后为(n_client, d1, d2)
+                W_tensor = torch.stack(layer_params, dim=0)  # 保留原始维度，不展平
+                p = W_tensor.ndim  # 张量阶数（p ≥ 2，含客户端维度）
+                logger.info(
+                    f"Layer {layer} stacked tensor shape: {W_tensor.shape} (p={p})"
+                )
 
-                # 检查奇异值，避免数值不稳定
-                rank = torch.sum(S > 1e-8).item()  # 有效秩
-                if rank == 0:
-                    # 如果矩阵几乎为零，不进行更新
-                    logger.warning(
-                        f"Layer {layer} has near-zero singular values, skipping update"
+                # 5. 计算张量迹范数的次梯度（基于各维度展开矩阵，原文、）
+                total_grad = torch.zeros_like(W_tensor)  # 累计各维度次梯度
+                # 对每个维度k（除客户端维度外，假设客户端维度为0）计算展开矩阵的迹范数次梯度
+                for k in range(0, p - 1):  # 维度从1开始（0为客户端维度）
+                    # 沿第k维度展开张量为矩阵
+                    # 展开规则：将维度k与客户端维度(0)合并为新的行，其余维度合并为列
+                    unfold_dim = k
+                    W_unfold = torch.flatten(W_tensor, start_dim=0, end_dim=unfold_dim)
+                    W_unfold = torch.flatten(W_unfold, start_dim=1)  # 列：剩余维度合并
+                    logger.info(f"Unfolded matrix shape (dim {k}): {W_unfold.shape}")
+
+                    # SVD分解计算迹范数次梯度
+                    U, S, Vh = torch.linalg.svd(W_unfold, full_matrices=False)
+                    rank = torch.sum(S > 1e-8).item()
+                    # 输出rank和奇异值
+                    logger.info(
+                        f"Unfolded matrix (dim {k}) rank: {rank}, singular values: {S.tolist()}"
                     )
-                    for idx in range(n_client):
-                        updated_dicts[idx][layer] = (
-                            model_params[idx][layer].detach().clone()
+                    if rank == 0:
+                        logger.warning(
+                            f"Unfolded matrix (dim {k}) has near-zero singular values, skipping"
                         )
-                    continue
+                        continue
 
-                # 使用有效的奇异向量计算次梯度
-                U_eff = U[:, :rank]
-                Vh_eff = Vh[:rank, :]
-                grad = U_eff @ Vh_eff  # 这确实是 U × V^T 的结果
+                    # 有效奇异向量
+                    U_eff = U[:, :rank]
+                    Vh_eff = Vh[:rank, :]
+                    grad_unfold = U_eff @ Vh_eff  # 迹范数次梯度（原文）
 
-                # 输出grad每行的范数
-                grad_norms = torch.norm(grad, dim=1)
-                logger.info(f"Layer {layer} gradient norms: {grad_norms}")
+                    # 将展开矩阵的梯度还原为张量形状
+                    grad_tensor = grad_unfold.reshape(
+                        W_tensor.shape
+                    )  # 恢复为堆叠张量形状
+                    total_grad += grad_tensor  # 累加各维度梯度（默认各维度权重α_k=1）
 
-                # 更新参数
-                W_new = W - self.lambda_ * grad
+                # 更新共享层参数（原文：w_i^t ← w_i^t - η_w * ∇L_r）
+                W_updated = W_tensor - self.lambda_ * total_grad
+                # 输出每行梯度的范数
+                logger.info(
+                    f"Layer {layer} total gradient norms: {[torch.norm(g, p=2).item() for g in total_grad]}"
+                )
 
-                # 还原各组参数形状
-                for idx, slice_vec in enumerate(W_new):
-                    updated_dicts[idx][layer] = slice_vec.reshape(shapes[idx])
+                # 7. 还原各客户端参数形状
+                for idx in range(n_client):
+                    updated_param = W_updated[idx].reshape(original_shapes[idx])
+                    updated_dicts[idx][layer] = updated_param
 
             # 构建返回格式
             personalized = {gid: state for gid, state in zip(client_ids, updated_dicts)}

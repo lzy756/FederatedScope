@@ -97,7 +97,7 @@ class RESISC45Splitter(BaseSplitter):
 
 def call_resisc45_splitter(splitter_type, client_num, **kwargs):
     if splitter_type == "RESISC45splitter":
-        splitter = RESISC45Splitter(client_num, **kwargs)
+        splitter = RESISC45Splitter(client_num)
         return splitter
     return None
 
