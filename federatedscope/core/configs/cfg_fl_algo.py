@@ -9,7 +9,6 @@ def extend_fl_algo_cfg(cfg):
     # ---------------------------------------------------------------------- #
     cfg.fedsak = CN()
     cfg.fedsak.share_patterns = []
-    cfg.fedsak.per_round = 10  # Number of rounds to perform FedSAK aggregation
 
     # ---------------------------------------------------------------------- #
     # FedGS related options
@@ -27,10 +26,10 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedopt.use = False
 
     cfg.fedopt.optimizer = CN(new_allowed=True)
-    cfg.fedopt.optimizer.type = Argument(
-        'SGD', description="optimizer type for FedOPT")
+    cfg.fedopt.optimizer.type = Argument("SGD", description="optimizer type for FedOPT")
     cfg.fedopt.optimizer.lr = Argument(
-        0.01, description="learning rate for FedOPT optimizer")
+        0.01, description="learning rate for FedOPT optimizer"
+    )
     cfg.fedopt.annealing = False
     cfg.fedopt.annealing_step_size = 2000
     cfg.fedopt.annealing_gamma = 0.5
@@ -41,7 +40,7 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedprox = CN()
 
     cfg.fedprox.use = False
-    cfg.fedprox.mu = 0.
+    cfg.fedprox.mu = 0.0
 
     # ---------------------------------------------------------------------- #
     # fedswa related options, Stochastic Weight Averaging (SWA)
@@ -138,20 +137,19 @@ def extend_fl_algo_cfg(cfg):
 def assert_fl_algo_cfg(cfg):
     if cfg.personalization.local_update_steps == -1:
         # By default, use the same step to normal mode
-        cfg.personalization.local_update_steps = \
-            cfg.train.local_update_steps
-        cfg.personalization.local_update_steps = \
-            cfg.train.local_update_steps
+        cfg.personalization.local_update_steps = cfg.train.local_update_steps
+        cfg.personalization.local_update_steps = cfg.train.local_update_steps
 
     if cfg.personalization.lr <= 0.0:
         # By default, use the same lr to normal mode
         cfg.personalization.lr = cfg.train.optimizer.lr
 
     if cfg.fedswa.use:
-        assert cfg.fedswa.start_rnd < cfg.federate.total_round_num, \
-            f'`cfg.fedswa.start_rnd` {cfg.fedswa.start_rnd} must be smaller ' \
-            f'than `cfg.federate.total_round_num` ' \
-            f'{cfg.federate.total_round_num}.'
+        assert cfg.fedswa.start_rnd < cfg.federate.total_round_num, (
+            f"`cfg.fedswa.start_rnd` {cfg.fedswa.start_rnd} must be smaller "
+            f"than `cfg.federate.total_round_num` "
+            f"{cfg.federate.total_round_num}."
+        )
 
 
 register_config("fl_algo", extend_fl_algo_cfg)
