@@ -1,21 +1,19 @@
 import os
 import logging
-import json
 import numpy as np
 from torchvision import transforms
 from torchvision.datasets import ImageFolder, DatasetFolder
-from sklearn.cluster import DBSCAN
-from scipy.stats import entropy
 
 from federatedscope.core.data import BaseDataTranslator
 from federatedscope.register import register_data
 from federatedscope.core.data import ClientData, StandaloneDataDict
+from federatedscope.contrib.splitter.fedgs_splitter import FedGS_Splitter
 
 logger = logging.getLogger(__name__)
 
 
 ##########################
-# 聚类相关函数（参考cross_domain_digits.py）
+# 聚类相关函数（使用FedGS_Splitter）
 ##########################
 
 def get_label_distribution(subsets: list, num_classes=10):
@@ -48,169 +46,48 @@ def get_label_distribution(subsets: list, num_classes=10):
     return distributions
 
 
-def normalize_distributions(distributions: list):
-    """标准化分布"""
-    normalized = []
-    for dist in distributions:
-        s = np.sum(dist)
-        if s > 0:
-            normalized.append(dist / s)
-        else:
-            normalized.append(dist)
-    return np.array(normalized)
-
-
-def js_divergence(p, q):
-    """计算Jensen-Shannon散度"""
-    # 平滑处理避免log(0)
-    p = np.array(p) + 1e-10
-    q = np.array(q) + 1e-10
-    p /= p.sum()
-    q /= q.sum()
-
-    # 计算混合分布
-    m = 0.5 * (p + q)
-
-    # JS散度 = (KL(P||M) + KL(Q||M))/2
-    return 0.5 * (entropy(p, m) + entropy(q, m))
-
-
-def compute_jsd_matrix(norm_dists):
-    """计算Jensen-Shannon散度距离矩阵"""
-    n = len(norm_dists)
-    jsd_matrix = np.zeros((n, n))
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            # 计算JSD(P||Q) = √[JSD(P||Q)] (确保度量满足三角不等式)
-            jsd_matrix[i, j] = jsd_matrix[j, i] = np.sqrt(
-                js_divergence(norm_dists[i], norm_dists[j])
-            )
-    return jsd_matrix
-
-
-def adaptive_cluster_clients(
-    train_distributions,
-    target_avg_size=4,  # 每个簇平均包含的用户数
-    min_threshold=0.01,  # 最小阈值
-    max_threshold=1.0,  # 最大阈值
-    max_iter=15,  # 最大迭代次数
-    tolerance=1,  # 簇大小容忍范围
-):
+def perform_clustering_with_fedgs(train_distributions,
+                                  distance_threshold=0.5,
+                                  min_groups=2,
+                                  max_groups=10,
+                                  balance_weight=2.0,
+                                  balance_tolerance=0.2):
     """
-    自适应调整阈值的聚类算法
+    使用FedGS_Splitter进行聚类
+
+    Args:
+        train_distributions: 客户端训练数据分布列表
+        distance_threshold: 距离阈值
+        min_groups: 最小簇数量
+        max_groups: 最大簇数量
+        balance_weight: 大小均衡权重
+        balance_tolerance: 大小均衡容忍度
+
+    Returns:
+        list: 聚类结果（peer communities）
     """
     n_clients = len(train_distributions)
-    target_clusters = max(1, n_clients // target_avg_size)  # 目标簇数
-    norm_dists = normalize_distributions(train_distributions)
-    jsd_matrix = compute_jsd_matrix(norm_dists)
 
-    logger.info(
-        f"开始自适应聚类: {n_clients}个客户端, 目标平均簇大小: {target_avg_size}, 目标簇数: {target_clusters}"
+    # 创建FedGS_Splitter实例
+    splitter = FedGS_Splitter(
+        client_num=n_clients,
+        distance_threshold=distance_threshold,
+        min_groups=min_groups,
+        max_groups=max_groups,
+        balance_weight=balance_weight,
+        balance_tolerance=balance_tolerance
     )
 
-    # 使用二分搜索自动调整阈值
-    low, high = min_threshold, max_threshold
-    best_jsd_threshold = low
-    best_clusters = None
+    # 设置数据分布信息
+    splitter.data_info = []
+    for dist in train_distributions:
+        splitter.data_info.append({"distribution": np.array(dist)})
 
-    for i in range(max_iter):
-        mid_jsd = (low + high) / 2
-        logger.info(
-            f"迭代#{i+1}: 尝试阈值 {mid_jsd:.4f} (范围 [{low:.4f}, {high:.4f}])"
-        )
+    # 执行聚类
+    logger.info(f"使用FedGS_Splitter进行聚类: {n_clients}个客户端")
+    splitter.build_peer_communities(train_distributions)
 
-        clustering = DBSCAN(
-            eps=mid_jsd, min_samples=1, metric="precomputed"  # 单个样本可成簇
-        )
-        cluster_labels = clustering.fit_predict(jsd_matrix)
-        num_clusters = len(np.unique(cluster_labels))
-
-        # 计算实际平均簇大小
-        cluster_sizes = [
-            np.sum(cluster_labels == label) for label in np.unique(cluster_labels)
-        ]
-        avg_cluster_size = np.mean(cluster_sizes) if num_clusters > 0 else 0
-
-        # 记录最佳结果
-        if best_clusters is None or abs(avg_cluster_size - target_avg_size) < tolerance:
-            best_jsd_threshold = mid_jsd
-            best_clusters = cluster_labels
-            best_size = avg_cluster_size
-            best_count = num_clusters
-
-        logger.info(f"结果: {num_clusters}个簇, 平均大小: {avg_cluster_size:.2f}")
-
-        # 检查是否达到目标范围
-        if abs(avg_cluster_size - target_avg_size) <= tolerance:
-            logger.info(
-                f"找到合适阈值: {mid_jsd:.4f}, 簇数: {num_clusters}, 平均大小: {avg_cluster_size:.2f}"
-            )
-            break
-
-        # 调整搜索范围
-        if avg_cluster_size > target_avg_size:
-            # 簇数过少，需要减少阈值使得簇数更多
-            high = mid_jsd
-        else:
-            # 簇数过多，需要增加阈值使得簇数更少
-            low = mid_jsd
-
-        # 检查收敛
-        if high - low < 0.001:
-            logger.info(
-                f"达到收敛: 最佳阈值 {best_jsd_threshold:.4f}, 簇数: {best_count}, 平均大小: {best_size:.2f}"
-            )
-            break
-    else:
-        logger.warning(
-            f"达到最大迭代次数 {max_iter}，使用最佳结果: 阈值 {best_jsd_threshold:.4f}"
-        )
-
-    # 构建社区结构
-    peer_communities = []
-    for label in np.unique(best_clusters):
-        community = np.where(best_clusters == label)[0]
-        peer_communities.append(community.tolist())
-
-    # 记录最终簇大小分布
-    cluster_sizes = [len(c) for c in peer_communities]
-    logger.info(
-        f"聚类完成: {len(peer_communities)}个簇, 平均大小: {np.mean(cluster_sizes):.2f}, "
-        f"最小: {np.min(cluster_sizes)}, 最大: {np.max(cluster_sizes)}"
-    )
-
-    return peer_communities
-
-
-def save_cluster_results(filename, train_dists, test_dists, communities):
-    """保存聚类结果到JSON文件"""
-    # 准备可JSON序列化的数据结构
-    data = {
-        "metadata": {
-            "num_clients": len(train_dists),
-            "num_classes": len(train_dists[0]),
-            "num_communities": len(communities),
-        },
-        "train_distributions": [
-            dist.tolist() if isinstance(dist, np.ndarray) else dist
-            for dist in train_dists
-        ],
-        "test_distributions": [
-            dist.tolist() if isinstance(dist, np.ndarray) else dist
-            for dist in test_dists
-        ],
-        "peer_communities": [
-            community.tolist() if isinstance(community, np.ndarray) else community
-            for community in communities
-        ],
-    }
-
-    # 写入文件
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
-
-    logger.info(f"聚类结果保存成功！文件: {filename}")
+    return splitter.peer_communities
 
 
 class ImageFolder_Custom(DatasetFolder):
@@ -308,7 +185,7 @@ def _load_domain_dataset(data_name, data_root, train_transform, test_transform):
         raise e
 
 
-def _create_federated_data_dict(config, client_cfgs, train_dataset, test_dataset, domain_name):
+def _create_federated_data_dict(config, client_cfgs, train_dataset, test_dataset, domain_name, domain_client_num):
     """
     Create federated data dictionary for a single domain dataset
 
@@ -318,13 +195,14 @@ def _create_federated_data_dict(config, client_cfgs, train_dataset, test_dataset
         train_dataset: Training dataset
         test_dataset: Test dataset
         domain_name: Name of the domain for logging
+        domain_client_num: Number of clients for this domain
 
     Returns:
-        dict: Federated data dictionary with 10 clients
+        dict: Federated data dictionary with specified number of clients
     """
-    # Create temporary config for this domain (10 clients)
+    # Create temporary config for this domain
     tmp_config = config.clone()
-    tmp_config.merge_from_list(['federate.client_num', 10])
+    tmp_config.merge_from_list(['federate.client_num', domain_client_num])
 
     # Use BaseDataTranslator to convert to federated format
     translator = BaseDataTranslator(tmp_config, client_cfgs)
@@ -337,20 +215,21 @@ def _create_federated_data_dict(config, client_cfgs, train_dataset, test_dataset
     return data_dict
 
 
-def _merge_data_dictionaries(config, data_dicts):
+def _merge_data_dictionaries(config, data_dicts, domain_client_nums):
     """
     Merge multiple federated data dictionaries into a single one
 
     Args:
         config: Original configuration object
         data_dicts: List of federated data dictionaries to merge
+        domain_client_nums: List of client numbers for each domain
 
     Returns:
         StandaloneDataDict: Merged federated data dictionary
     """
     from torch.utils.data import ConcatDataset
 
-    total_clients = len(data_dicts) * 10  # Each dict has 10 clients
+    total_clients = sum(domain_client_nums)
 
     # Create merged config
     tmp_config_merged = config.clone()
@@ -366,13 +245,16 @@ def _merge_data_dictionaries(config, data_dicts):
     merged_data_dict[0] = ClientData(tmp_config_merged, train=server_train, val=server_val, test=server_test)
 
     # Add clients from each data dictionary with proper ID offset
-    for dict_idx, data_dict in enumerate(data_dicts):
-        client_id_offset = dict_idx * 10  # 0, 10, 20, 30
-        for client_id in range(1, 11):
+    client_id_offset = 0
+    for data_dict, domain_client_num in zip(data_dicts, domain_client_nums):
+        for client_id in range(1, domain_client_num + 1):
             new_client_id = client_id + client_id_offset
             merged_data_dict[new_client_id] = data_dict[client_id]
             # Update client configuration to merged config
             merged_data_dict[new_client_id].setup(tmp_config_merged)
+
+        # Update offset for next domain
+        client_id_offset += domain_client_num
 
     # Create final StandaloneDataDict
     return StandaloneDataDict(merged_data_dict, tmp_config_merged)
@@ -380,7 +262,7 @@ def _merge_data_dictionaries(config, data_dicts):
 
 def _perform_clustering_analysis(data_dict, data_root):
     """
-    Perform clustering analysis on federated data
+    Perform clustering analysis on federated data using FedGS_Splitter
 
     Args:
         data_dict: Federated data dictionary
@@ -409,20 +291,31 @@ def _perform_clustering_analysis(data_dict, data_root):
             train_distributions = get_label_distribution(train_subsets, num_classes=10)
             test_distributions = get_label_distribution(test_subsets, num_classes=10)
 
-            # Perform clustering
-            logger.info("执行客户端聚类...")
-            peer_communities = adaptive_cluster_clients(train_distributions)
+            # Perform clustering using FedGS_Splitter
+            logger.info("使用FedGS_Splitter执行客户端聚类...")
+            peer_communities = perform_clustering_with_fedgs(
+                train_distributions,
+                distance_threshold=0.5,
+                min_groups=2,
+                max_groups=10,
+                balance_weight=2.0,
+                balance_tolerance=0.2
+            )
 
             logger.info(f"聚类结果: {peer_communities}")
 
-            # Save clustering results
+            # Save clustering results using FedGS_Splitter's save method
+            n_clients = len(train_distributions)
+            splitter = FedGS_Splitter(client_num=n_clients)
+
+            # Set the data and communities for saving
+            splitter.data_info = [{"distribution": np.array(dist)} for dist in train_distributions]
+            splitter.test_data_info = [{"distribution": np.array(dist)} for dist in test_distributions]
+            splitter.peer_communities = peer_communities
+
+            # Save to the specified location
             cluster_file = os.path.join(data_root, "peer_communities.json")
-            save_cluster_results(
-                cluster_file,
-                train_distributions,
-                test_distributions,
-                peer_communities
-            )
+            splitter.save_cluster_results(cluster_file)
 
         else:
             logger.warning("无法获取客户端数据子集，跳过聚类步骤")
@@ -444,6 +337,7 @@ def load_office_caltech_dataset(config, client_cfgs=None):
         tuple: (datadict, config) containing federated dataset
     """
     data_root = config.data.root
+    total_clients = config.federate.client_num
 
     # Define data transforms from RethinkFL
     train_transform = transforms.Compose([
@@ -460,24 +354,63 @@ def load_office_caltech_dataset(config, client_cfgs=None):
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
     ])
 
-    # Load all domain datasets
+    # Load all domain datasets and calculate sample counts
     domain_names = ['caltech', 'amazon', 'webcam', 'dslr']
-    data_dicts = []
+    domain_datasets = []
+    domain_sample_counts = []
 
     for domain_name in domain_names:
         # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
             domain_name, data_root, train_transform, test_transform
         )
+        domain_datasets.append((train_dataset, test_dataset))
+
+        # Count samples in this domain (using training samples for proportion calculation)
+        sample_count = len(train_dataset)
+        domain_sample_counts.append(sample_count)
+        logger.info(f"Domain {domain_name}: {sample_count} training samples")
+
+    # Calculate client allocation based on sample proportions
+    total_samples = sum(domain_sample_counts)
+    domain_client_nums = []
+    allocated_clients = 0
+
+    for i, sample_count in enumerate(domain_sample_counts):
+        if i == len(domain_sample_counts) - 1:
+            # Last domain gets remaining clients
+            domain_client_num = total_clients - allocated_clients
+        else:
+            # Calculate proportional allocation
+            proportion = sample_count / total_samples
+            domain_client_num = max(1, round(proportion * total_clients))  # At least 1 client per domain
+            allocated_clients += domain_client_num
+
+        domain_client_nums.append(domain_client_num)
+        logger.info(f"Domain {domain_names[i]}: {domain_client_num} clients "
+                   f"(proportion: {sample_count/total_samples:.3f})")
+
+    # Verify total allocation
+    actual_total = sum(domain_client_nums)
+    if actual_total != total_clients:
+        logger.warning(f"Client allocation mismatch: expected {total_clients}, got {actual_total}")
+        # Adjust the last domain to match exactly
+        domain_client_nums[-1] += (total_clients - actual_total)
+        logger.info(f"Adjusted last domain to {domain_client_nums[-1]} clients")
+
+    # Create federated data dictionaries for each domain
+    data_dicts = []
+    for i, (domain_name, (train_dataset, test_dataset), domain_client_num) in enumerate(
+            zip(domain_names, domain_datasets, domain_client_nums)):
 
         # Create federated data dictionary for this domain
         data_dict = _create_federated_data_dict(
-            config, client_cfgs, train_dataset, test_dataset, domain_name
+            config, client_cfgs, train_dataset, test_dataset, domain_name, domain_client_num
         )
         data_dicts.append(data_dict)
 
     # Merge all data dictionaries
-    merged_data_dict = _merge_data_dictionaries(config, data_dicts)
+    merged_data_dict = _merge_data_dictionaries(config, data_dicts, domain_client_nums)
 
     # Perform clustering analysis
     _perform_clustering_analysis(merged_data_dict, data_root)

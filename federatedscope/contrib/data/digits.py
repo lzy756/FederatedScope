@@ -3,8 +3,10 @@ import numpy as np
 from PIL import Image
 from sklearn.datasets import load_svmlight_file
 import scipy.io as sio
+import torch
 from torch.utils.data import Dataset, TensorDataset, Subset
 from torchvision import datasets, transforms
+from torchvision.datasets import VisionDataset
 from federatedscope.core.data import BaseDataTranslator
 import json
 import logging
@@ -13,6 +15,7 @@ from sklearn.cluster import DBSCAN
 from scipy.stats import entropy
 from federatedscope.register import register_data
 from federatedscope.core.data import ClientData, StandaloneDataDict
+from federatedscope.contrib.splitter.fedgs_splitter import FedGS_Splitter
 logger = logging.getLogger(__name__)
 
 ##########################
@@ -47,171 +50,6 @@ def get_label_distribution(subsets: list, num_classes=10):
             dist[label] += 1
         distributions.append(dist)
     return distributions
-
-
-def normalize_distributions(distributions: list):
-    """标准化分布"""
-    normalized = []
-    for dist in distributions:
-        s = np.sum(dist)
-        if s > 0:
-            normalized.append(dist / s)
-        else:
-            normalized.append(dist)
-    return np.array(normalized)
-
-
-def js_divergence(p, q):
-    """计算Jensen-Shannon散度"""
-    # 平滑处理避免log(0)
-    p = np.array(p) + 1e-10
-    q = np.array(q) + 1e-10
-    p /= p.sum()
-    q /= q.sum()
-
-    # 计算混合分布
-    m = 0.5 * (p + q)
-
-    # JS散度 = (KL(P||M) + KL(Q||M))/2
-    return 0.5 * (entropy(p, m) + entropy(q, m))
-
-
-def compute_jsd_matrix(norm_dists):
-    """计算Jensen-Shannon散度距离矩阵"""
-    n = len(norm_dists)
-    jsd_matrix = np.zeros((n, n))
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            # 计算JSD(P||Q) = √[JSD(P||Q)] (确保度量满足三角不等式)
-            jsd_matrix[i, j] = jsd_matrix[j, i] = np.sqrt(
-                js_divergence(norm_dists[i], norm_dists[j])
-            )
-    return jsd_matrix
-
-
-def adaptive_cluster_clients(
-    train_distributions,
-    target_avg_size=4,  # 每个簇平均包含的用户数
-    min_threshold=0.01,  # 最小阈值
-    max_threshold=1.0,  # 最大阈值
-    max_iter=15,  # 最大迭代次数
-    tolerance=1,  # 簇大小容忍范围
-):
-    """
-    自适应调整阈值的聚类算法
-    """
-    n_clients = len(train_distributions)
-    target_clusters = max(1, n_clients // target_avg_size)  # 目标簇数
-    norm_dists = normalize_distributions(train_distributions)
-    jsd_matrix = compute_jsd_matrix(norm_dists)
-
-    logger.info(
-        f"开始自适应聚类: {n_clients}个客户端, 目标平均簇大小: {target_avg_size}, 目标簇数: {target_clusters}"
-    )
-
-    # 使用二分搜索自动调整阈值
-    low, high = min_threshold, max_threshold
-    best_jsd_threshold = low
-    best_clusters = None
-
-    for i in range(max_iter):
-        mid_jsd = (low + high) / 2
-        logger.info(
-            f"迭代#{i+1}: 尝试阈值 {mid_jsd:.4f} (范围 [{low:.4f}, {high:.4f}])"
-        )
-
-        clustering = DBSCAN(
-            eps=mid_jsd, min_samples=1, metric="precomputed"  # 单个样本可成簇
-        )
-        cluster_labels = clustering.fit_predict(jsd_matrix)
-        num_clusters = len(np.unique(cluster_labels))
-
-        # 计算实际平均簇大小
-        cluster_sizes = [
-            np.sum(cluster_labels == label) for label in np.unique(cluster_labels)
-        ]
-        avg_cluster_size = np.mean(cluster_sizes) if num_clusters > 0 else 0
-
-        # 记录最佳结果
-        if best_clusters is None or abs(avg_cluster_size - target_avg_size) < tolerance:
-            best_jsd_threshold = mid_jsd
-            best_clusters = cluster_labels
-            best_size = avg_cluster_size
-            best_count = num_clusters
-
-        logger.info(f"结果: {num_clusters}个簇, 平均大小: {avg_cluster_size:.2f}")
-
-        # 检查是否达到目标范围
-        if abs(avg_cluster_size - target_avg_size) <= tolerance:
-            logger.info(
-                f"找到合适阈值: {mid_jsd:.4f}, 簇数: {num_clusters}, 平均大小: {avg_cluster_size:.2f}"
-            )
-            break
-
-        # 调整搜索范围
-        if avg_cluster_size > target_avg_size:
-            # 簇数过少，需要减少阈值使得簇数更多
-            high = mid_jsd
-        else:
-            # 簇数过多，需要增加阈值使得簇数更少
-            low = mid_jsd
-
-        # 检查收敛
-        if high - low < 0.001:
-            logger.info(
-                f"达到收敛: 最佳阈值 {best_jsd_threshold:.4f}, 簇数: {best_count}, 平均大小: {best_size:.2f}"
-            )
-            break
-    else:
-        logger.warning(
-            f"达到最大迭代次数 {max_iter}，使用最佳结果: 阈值 {best_jsd_threshold:.4f}"
-        )
-
-    # 构建社区结构
-    peer_communities = []
-    for label in np.unique(best_clusters):
-        community = np.where(best_clusters == label)[0]
-        peer_communities.append(community.tolist())
-
-    # 记录最终簇大小分布
-    cluster_sizes = [len(c) for c in peer_communities]
-    logger.info(
-        f"聚类完成: {len(peer_communities)}个簇, 平均大小: {np.mean(cluster_sizes):.2f}, "
-        f"最小: {np.min(cluster_sizes)}, 最大: {np.max(cluster_sizes)}"
-    )
-
-    return peer_communities
-
-
-def save_cluster_results(filename, train_dists, test_dists, communities):
-    """保存聚类结果到JSON文件"""
-    # 准备可JSON序列化的数据结构
-    data = {
-        "metadata": {
-            "num_clients": len(train_dists),
-            "num_classes": len(train_dists[0]),
-            "num_communities": len(communities),
-        },
-        "train_distributions": [
-            dist.tolist() if isinstance(dist, np.ndarray) else dist
-            for dist in train_dists
-        ],
-        "test_distributions": [
-            dist.tolist() if isinstance(dist, np.ndarray) else dist
-            for dist in test_dists
-        ],
-        "peer_communities": [
-            community.tolist() if isinstance(community, np.ndarray) else community
-            for community in communities
-        ],
-    }
-
-    # 写入文件
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=2)
-
-    logger.info(f"聚类结果保存成功！文件: {filename}")
 
 ##########################
 # 数据采样函数
@@ -293,6 +131,111 @@ def load_syn(data_root, transform):
     test_ds = ImageFolder(root=os.path.join(syn_root, 'imgs_valid'), transform=transform)
     return train_ds, test_ds
 
+class MNISTM(VisionDataset):
+    """MNIST-M Dataset for FederatedScope.
+
+    This dataset loads MNIST-M data from pre-downloaded .pt files.
+    """
+
+    training_file = "mnist_m_train.pt"
+    test_file = "mnist_m_test.pt"
+    classes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+
+    def __init__(self, root, train=True, transform=None, target_transform=None):
+        """Initialize MNIST-M dataset.
+
+        Args:
+            root (str): Root directory where data is stored
+            train (bool): If True, load training data; otherwise load test data
+            transform: Transform to apply to images
+            target_transform: Transform to apply to targets
+        """
+        super(MNISTM, self).__init__(root, transform=transform, target_transform=target_transform)
+
+        self.train = train
+
+        # Check if data files exist
+        if not self._check_exists():
+            raise RuntimeError(
+                f"Dataset not found in {self.data_folder}. "
+                f"Please ensure {self.training_file} and {self.test_file} are present."
+            )
+
+        # Load data
+        if self.train:
+            data_file = self.training_file
+        else:
+            data_file = self.test_file
+
+        data_path = os.path.join(self.data_folder, data_file)
+        logger.info(f"Loading MNIST-M data from: {data_path}")
+
+        self.data, self.targets = torch.load(data_path)
+
+        # Convert targets to long tensor if needed
+        if not isinstance(self.targets, torch.LongTensor):
+            self.targets = self.targets.long()
+
+        logger.info(f"Loaded MNIST-M {'train' if train else 'test'} data: "
+                   f"{len(self.data)} samples, {len(torch.unique(self.targets))} classes")
+
+    def __getitem__(self, index):
+        """Get item by index.
+
+        Args:
+            index (int): Index
+
+        Returns:
+            tuple: (image, target) where target is index of the target class
+        """
+        img, target = self.data[index], int(self.targets[index])
+
+        # Convert tensor to PIL Image
+        # MNIST-M images are RGB, so we need to handle the tensor format properly
+        if isinstance(img, torch.Tensor):
+            # If tensor is in CHW format, convert to HWC for PIL
+            if img.dim() == 3 and img.shape[0] == 3:
+                img = img.permute(1, 2, 0)
+            img = img.numpy()
+
+        # Ensure the image is in the right format for PIL
+        if img.dtype != 'uint8':
+            img = (img * 255).astype('uint8')
+
+        img = Image.fromarray(img, mode="RGB")
+
+        if self.transform is not None:
+            img = self.transform(img)
+
+        if self.target_transform is not None:
+            target = self.target_transform(target)
+
+        return img, target
+
+    def __len__(self):
+        """Return size of dataset."""
+        return len(self.data)
+
+    @property
+    def data_folder(self):
+        """Return the folder containing the data files."""
+        return os.path.join(self.root, 'mnist_m')
+
+    @property
+    def class_to_idx(self):
+        """Return mapping from class names to indices."""
+        return {cls: i for i, cls in enumerate(self.classes)}
+
+    def _check_exists(self):
+        """Check if data files exist."""
+        train_path = os.path.join(self.data_folder, self.training_file)
+        test_path = os.path.join(self.data_folder, self.test_file)
+        return os.path.exists(train_path) and os.path.exists(test_path)
+
+    def extra_repr(self):
+        """Return extra representation string."""
+        return f"Split: {'Train' if self.train else 'Test'}"
+
 def _merge_data_dictionaries(config, data_dicts):
     """
     Merge multiple federated data dictionaries into a single one
@@ -337,7 +280,7 @@ def _merge_data_dictionaries(config, data_dicts):
 
 def _perform_clustering_analysis(data_dict, data_root):
     """
-    Perform clustering analysis on federated data
+    Perform clustering analysis on federated data using FedGS_Splitter
 
     Args:
         data_dict: Federated data dictionary
@@ -361,25 +304,39 @@ def _perform_clustering_analysis(data_dict, data_root):
         logger.info(f"收集到 {len(train_subsets)} 个训练子集, {len(test_subsets)} 个测试子集")
 
         if train_subsets and test_subsets:
-            # Calculate label distributions
+            # Calculate label distributions using existing function
             logger.info("计算客户端标签分布...")
             train_distributions = get_label_distribution(train_subsets, num_classes=10)
             test_distributions = get_label_distribution(test_subsets, num_classes=10)
 
-            # Perform clustering
-            logger.info("执行客户端聚类...")
-            peer_communities = adaptive_cluster_clients(train_distributions)
-
-            logger.info(f"聚类结果: {peer_communities}")
-
-            # Save clustering results
-            cluster_file = os.path.join(data_root, "peer_communities.json")
-            save_cluster_results(
-                cluster_file,
-                train_distributions,
-                test_distributions,
-                peer_communities
+            # Create FedGS_Splitter instance for clustering
+            logger.info("使用FedGS_Splitter执行客户端聚类...")
+            num_clients = len(train_distributions)
+            
+            # Initialize splitter with appropriate parameters
+            splitter = FedGS_Splitter(
+                client_num=num_clients,
+                alpha=0.5,
+                distance_threshold=0.5,
+                min_groups=2,
+                max_groups=min(10, num_clients // 2),  # 动态调整最大组数
+                balance_weight=2.0,
+                balance_tolerance=0.2
             )
+            
+            # Store distributions in splitter
+            splitter.data_info = [{"distribution": np.array(dist)} for dist in train_distributions]
+            splitter.test_data_info = [{"distribution": np.array(dist)} for dist in test_distributions]
+            
+            # Perform clustering using FedGS_Splitter
+            splitter.build_peer_communities(train_distributions)
+            
+            # Save clustering results using FedGS_Splitter's method
+            cluster_file = os.path.join(data_root, "peer_communities.json")
+            splitter.save_cluster_results(cluster_file)
+            
+            logger.info(f"聚类结果: {splitter.peer_communities}")
+            logger.info(f"聚类结果已保存到: {cluster_file}")
 
         else:
             logger.warning("无法获取客户端数据子集，跳过聚类步骤")
@@ -387,6 +344,48 @@ def _perform_clustering_analysis(data_dict, data_root):
     except Exception as e:
         logger.error(f"聚类过程中出现错误: {e}")
         logger.info("继续返回联邦数据，但没有聚类信息")
+
+##########################
+# 客户端数量分配函数
+##########################
+
+def calculate_client_allocation(dataset_sizes, total_clients=100, min_clients_per_domain=5):
+    """
+    根据数据集大小比例分配客户端数量
+    
+    Args:
+        dataset_sizes: 各数据集的样本数量列表
+        total_clients: 总客户端数量
+        min_clients_per_domain: 每个域的最小客户端数量
+    
+    Returns:
+        list: 每个数据集分配的客户端数量
+    """
+    total_samples = sum(dataset_sizes)
+    
+    # 计算基于比例的初始分配
+    initial_allocation = []
+    for size in dataset_sizes:
+        proportion = size / total_samples
+        allocated = max(min_clients_per_domain, int(proportion * total_clients))
+        initial_allocation.append(allocated)
+    
+    # 调整总数使其等于目标总客户端数
+    current_total = sum(initial_allocation)
+    if current_total != total_clients:
+        # 按比例调整最大的几个域
+        diff = total_clients - current_total
+        largest_domains = sorted(range(len(initial_allocation)), 
+                               key=lambda i: initial_allocation[i], reverse=True)
+        
+        for i in range(abs(diff)):
+            domain_idx = largest_domains[i % len(largest_domains)]
+            if diff > 0:
+                initial_allocation[domain_idx] += 1
+            elif initial_allocation[domain_idx] > min_clients_per_domain:
+                initial_allocation[domain_idx] -= 1
+    
+    return initial_allocation
 
 ##########################
 # 主入口函数，注册给FederatedScope调用
@@ -402,9 +401,6 @@ def load_digits_data(config, client_cfgs=None):
     random.seed(42)
     np.random.seed(42)
 
-    # 统一的客户端数量
-    unified_client_num = 25
-
     # 加载数据集
     transform = transforms.Compose(
         [
@@ -418,55 +414,76 @@ def load_digits_data(config, client_cfgs=None):
         ]
     )
 
-    # MNIST数据集 - 采样1/6的数据
-    mnist_train_full = datasets.MNIST(root=data_root, train=True, transform=transform, download=True)
-    mnist_test_full = datasets.MNIST(root=data_root, train=False, transform=transform, download=True)
-    logger.info(f"Original MNIST dataset: train={len(mnist_train_full)}, test={len(mnist_test_full)}")
+    # 先加载所有数据集以获取样本数量
+    logger.info("Loading all datasets to calculate sample sizes...")
+    
+    # MNIST数据集
+    mnist_train = MNISTM(root=data_root, train=True, transform=transform)
+    mnist_test = MNISTM(root=data_root, train=False, transform=transform)
+    logger.info(f"Original MNISTM dataset: train={len(mnist_train)}, test={len(mnist_test)}")
+    mnist_train = sample_dataset(mnist_train, 1/6)
+    mnist_test = sample_dataset(mnist_test, 1/6)
+    logger.info(f"Sampled SVHN dataset: train={len(mnist_test)}, test={len(mnist_test)}")
 
-    # 对MNIST进行采样
-    mnist_train = sample_dataset(mnist_train_full, 1/6)
-    mnist_test = sample_dataset(mnist_test_full, 1/6)
-    logger.info(f"Sampled MNIST dataset: train={len(mnist_train)}, test={len(mnist_test)}")
+    # USPS数据集
+    usps_train, usps_test = load_usps(data_root, transform)
+    logger.info(f"Loaded USPS dataset: train={len(usps_train)}, test={len(usps_test)}")
 
+    # SVHN数据集
+    svhn_train, svhn_test = load_svhn(data_root, transform)
+    logger.info(f"Original SVHN dataset: train={len(svhn_train)}, test={len(svhn_test)}")
+    svhn_train = sample_dataset(svhn_train, 1/7)
+    svhn_test = sample_dataset(svhn_test, 1/7)
+    logger.info(f"Sampled SVHN dataset: train={len(svhn_train)}, test={len(svhn_test)}")
+
+    # SYN数据集
+    syn_train, syn_test = load_syn(data_root, transform)
+    logger.info(f"Loaded SYN dataset: train={len(syn_train)}, test={len(syn_test)}")
+
+    # 计算训练集样本数量用于客户端分配
+    dataset_train_sizes = [len(mnist_train), len(usps_train), len(svhn_train), len(syn_train)]
+    dataset_names = ["MNIST-M", "USPS", "SVHN", "SYN"]
+    
+    # 根据样本数量比例分配客户端数量
+    total_clients = getattr(config.federate, 'client_num', 100)  # 从配置获取总客户端数，默认100
+    client_allocation = calculate_client_allocation(dataset_train_sizes, total_clients)
+    
+    logger.info("Client allocation based on dataset sizes:")
+    for i, (name, size, clients) in enumerate(zip(dataset_names, dataset_train_sizes, client_allocation)):
+        percentage = (size / sum(dataset_train_sizes)) * 100
+        logger.info(f"{name}: {size} samples ({percentage:.1f}%) -> {clients} clients")
+    
+    logger.info(f"Total clients allocated: {sum(client_allocation)}")
+
+    # 使用分配的客户端数量创建联邦数据集
+    # MNIST数据集
     mnist_split_datasets = (mnist_train, mnist_test, mnist_test)
     tmp_config = config.clone()
-    tmp_config.merge_from_list(['federate.client_num', unified_client_num])
+    tmp_config.merge_from_list(['federate.client_num', client_allocation[0]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
     mnist_data_dict = translator(mnist_split_datasets)
     logger.info(f"Successfully created federated MNIST dataset with {len(mnist_data_dict) - 1} clients")
 
-    # USPS数据集 - 保持原始大小
-    usps_train, usps_test = load_usps(data_root, transform)
-    logger.info(f"Loaded USPS dataset: train={len(usps_train)}, test={len(usps_test)}")
+    # USPS数据集
     usps_split_datasets = (usps_train, usps_test, usps_test)
     tmp_config = config.clone()
-    tmp_config.merge_from_list(['federate.client_num', unified_client_num])
+    tmp_config.merge_from_list(['federate.client_num', client_allocation[1]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
     usps_data_dict = translator(usps_split_datasets)
     logger.info(f"Successfully created federated USPS dataset with {len(usps_data_dict) - 1} clients")
 
-    # SVHN数据集 - 采样1/7的数据
-    svhn_train_full, svhn_test_full = load_svhn(data_root, transform)
-    logger.info(f"Original SVHN dataset: train={len(svhn_train_full)}, test={len(svhn_test_full)}")
-
-    # 对SVHN进行采样
-    svhn_train = sample_dataset(svhn_train_full, 1/7)
-    svhn_test = sample_dataset(svhn_test_full, 1/7)
-    logger.info(f"Sampled SVHN dataset: train={len(svhn_train)}, test={len(svhn_test)}")
-
+    # SVHN数据集
     svhn_split_datasets = (svhn_train, svhn_test, svhn_test)
     tmp_config = config.clone()
-    tmp_config.merge_from_list(['federate.client_num', unified_client_num])
+    tmp_config.merge_from_list(['federate.client_num', client_allocation[2]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
     svhn_data_dict = translator(svhn_split_datasets)
     logger.info(f"Successfully created federated SVHN dataset with {len(svhn_data_dict) - 1} clients")
     
-    # SYN数据集 - 保持原始大小
-    syn_train, syn_test = load_syn(data_root, transform)
-    logger.info(f"Loaded SYN dataset: train={len(syn_train)}, test={len(syn_test)}")
+    # SYN数据集
     syn_split_datasets = (syn_train, syn_test, syn_test)
     tmp_config = config.clone()
-    tmp_config.merge_from_list(['federate.client_num', unified_client_num])
+    tmp_config.merge_from_list(['federate.client_num', client_allocation[3]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
     syn_data_dict = translator(syn_split_datasets)
     logger.info(f"Successfully created federated SYN dataset with {len(syn_data_dict) - 1} clients")

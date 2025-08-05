@@ -8,17 +8,13 @@ federate:
   method: fedsak
   mode: standalone
   total_round_num: 500
-  sample_client_rate: 0.2
+  sample_client_num: 25
 data:
   root: data/
+  type: ut_har_frequency_domains
   splitter: lda
-  # splitter_args: [{'client_num': 200}]
-  type: ut_har
-  # splits: [0.6,0.2,0.2]
-  # subsample: 0.05
-  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
-  splitter_args: [{'alpha': 0.2}]
-  consistent_label_distribution: False
+  splitter_args: [{'alpha': 0.1}]
+  # consistent_label_distribution: False
 aggregator:
   lambda_: 0.1
   lr_shared: 0.05

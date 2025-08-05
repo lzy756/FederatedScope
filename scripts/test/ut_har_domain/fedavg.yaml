@@ -6,15 +6,14 @@ seed: 12345
 federate:
   mode: standalone
   total_round_num: 500
-  sample_client_rate: 0.2
+  sample_client_num: 25
   client_num: 25
 data:
   root: data/
-  type: ut_har
-  # splits: [0.8,0.1,0.1]
-  # splitter: ut_har_splitter
+  type: ut_har_frequency_domains
   splitter: lda
-  splitter_args: [{'alpha': 0.2}]
+  splitter_args: [{'alpha': 0.1}]
+  # splitter: RESISC45splitter
   # consistent_label_distribution: False
 dataloader:
   batch_size: 32
@@ -32,14 +31,8 @@ grad:
   grad_clip: 5.0
 criterion:
   type: CrossEntropyLoss
-# trainer:
-#   type: ut_har_rnn_trainer
 eval:
   freq: 1
   metrics: ['acc', 'loss']
   best_res_update_round_wise_key: test_loss
-# wandb:
-#   use: True
-#   name_project: ut_har_rnn
-#   name_user: 2237617390-
 

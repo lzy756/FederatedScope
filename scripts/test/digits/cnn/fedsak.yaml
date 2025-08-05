@@ -6,13 +6,12 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 100
-  client_num: 100
+  client_num: 500
   sample_client_num: 40
   method: fedsak
 data:
   root: data/
   type: digits
-  consistent_label_distribution: False
   splitter: RESISC45splitter
 dataloader:
   batch_size: 64

@@ -5,27 +5,22 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 100
-  client_num: 500
-  sample_client_num: 40
+  total_round_num: 1000
+  client_num: 20
+  sample_client_num: 20
 data:
   root: data/
-  type: digits
-  # consistent_label_distribution: False
+  type: mnist
   splitter: RESISC45splitter
-  # splitter: lda
-  # splitter_args: [{'alpha': 0.5}]
 dataloader:
   batch_size: 64
 model:
-  type: cross_domain_digit_cnn
-  in_channels: 3
-  out_channels: 10
+  type: fedsak_mnist
 train:
   local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.01
+    lr: 0.1
     weight_decay: 0.0
 grad:
   grad_clip: 5.0
@@ -34,5 +29,4 @@ criterion:
 eval:
   freq: 1
   metrics: ['acc', 'correct']
-  best_res_update_round_wise_key: test_loss
-  count_flops: False
+  # best_res_update_round_wise_key: test_loss

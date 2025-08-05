@@ -6,15 +6,15 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 100
-  client_num: 500
-  sample_client_num: 40
+  client_num: 200
+  sample_client_num: 50
 data:
   root: data/
   type: digits
   # consistent_label_distribution: False
-  splitter: RESISC45splitter
-  # splitter: lda
-  # splitter_args: [{'alpha': 0.5}]
+  # splitter: RESISC45splitter
+  splitter: lda
+  splitter_args: [{'alpha': 0.1}]
 dataloader:
   batch_size: 64
 model:

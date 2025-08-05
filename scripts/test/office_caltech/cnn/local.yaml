@@ -6,14 +6,15 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 100
-  client_num: 500
+  client_num: 50
   sample_client_num: 40
+  method: local
 data:
   root: data/
-  type: digits
-  # consistent_label_distribution: False
+  type: office_caltech
+  # consistent_label_distribution: True
   splitter: RESISC45splitter
-  # splitter: lda
+  # splitter: iid
   # splitter_args: [{'alpha': 0.5}]
 dataloader:
   batch_size: 64
@@ -34,5 +35,5 @@ criterion:
 eval:
   freq: 1
   metrics: ['acc', 'correct']
-  best_res_update_round_wise_key: test_loss
+  # best_res_update_round_wise_key: test_loss
   count_flops: False
