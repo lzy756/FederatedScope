@@ -216,7 +216,7 @@ class MIXServer(Server):
             f"Server: Broadcasting model parameters for round {self.state}, {out_type} -> {in_type}"
         )
         if msg_type == "evaluate":
-            receiver = self.prev_sample_client_ids  # Send to all clients
+            receiver = list(self.comm_manager.neighbors.keys())
             for rcv_idx in receiver:
                 content = None
                 if rcv_idx in self.personalized_slices:
@@ -472,51 +472,36 @@ class MIXServer(Server):
                 f"Server: Intra-cluster aggregation completed, {len(self.personalized_slices)} personalized slices created"
             )
 
+            self.prev_sample_client_ids = list(self.comm_manager.neighbors.keys())
+
         # model_para: Inter-cluster aggregation using trace-norm regularization
         if self.in_type == MODEL_PARA_TYPE:
             client_feedback = []
-
-            # 取出每个被选簇中的一个用户的模型
-            for (
-                cluster_idx,
-                cluster_clients,
-            ) in self.selected_clients_per_cluster.items():
-                if not cluster_clients:  # Skip empty clusters
-                    continue
-                # 随机选取一个客户端的模型作为代表
-                client_id = random.choice(cluster_clients)
-                if client_id in self.msg_buffer["train"][round]:
-                    content = self.msg_buffer["train"][round][client_id]
-                    assert (
-                        isinstance(content, tuple) and len(content) == 3
-                    ), f"Expected content to be a tuple of length 3, got {len(content)}"
-                    sample_size, in_type, model_para = content
-                    assert (
-                        in_type == self.in_type
-                    ), f"Expected in_type to be {self.in_type}, got {in_type}"
-                    # 聚合器内部已有安全的tensor处理，无需额外克隆
-                    client_info = {
-                        "client_id": client_id,
-                        "model_para": model_para,
-                        "sample_size": sample_size,
-                    }
-                    client_feedback.append(client_info)
+            for cid in self.sample_client_ids:
+                content = self.msg_buffer["train"][round][cid]
+                assert (
+                    isinstance(content, tuple) and len(content) == 3
+                ), f"Expected content to be a tuple of length 3, got {len(content)}"
+                sample_size, in_type, model_para = content
+                assert (
+                    in_type == self.in_type
+                ), f"Expected in_type to be {self.in_type}, got {in_type}"
+                # 聚合器内部已有安全的tensor处理，无需额外克隆
+                client_info = {
+                    "client_id": cid,
+                    "model_para": model_para,
+                    "sample_size": sample_size,
+                }
+                client_feedback.append(client_info)
+            logger.info(
+                f"Server: Performing inter-cluster aggregation with {len(client_feedback)} clusters"
+            )
+            # Use FedSAK aggregation method for inter-cluster aggregation
             result = self.aggregator.aggregate_inter_group(client_feedback)
+            self.personalized_slices = result["model_para_all"]
 
-            self.personalized_slices = {}  # Reset personalized slices for this round
-            for client_id, model_para in result.items():
-                # 找到client_id对应的peer community
-                for i, pc in enumerate(self.peer_communities):
-                    if client_id in pc:
-                        for peer_client_id in pc:
-                            # 聚合器返回的已经是安全的独立副本，无需再次克隆
-                            self.personalized_slices[peer_client_id] = copy.deepcopy(
-                                model_para
-                            )
-                        break
-
-        # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
-        self.prev_sample_client_ids = list(self.comm_manager.neighbors.keys())
+            # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
+            self.prev_sample_client_ids = self.sample_client_ids.copy()
 
         # 清理缓存
         self.msg_buffer["train"][round].clear()

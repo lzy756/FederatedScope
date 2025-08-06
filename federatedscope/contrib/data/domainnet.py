@@ -1,28 +1,31 @@
 import os
+import logging
 import numpy as np
 import random
 from PIL import Image
-
-import torch
-from torch.utils.data import Subset, Dataset
 from torchvision import transforms
-import os
-from torch.utils.data import Dataset
-from PIL import Image
-import numpy as np
-import logging
-from federatedscope.contrib.data.utils import dirichlet_split, get_label_distribution
+from torch.utils.data import Dataset, Subset, ConcatDataset
+from federatedscope.core.data import BaseDataTranslator
+from federatedscope.register import register_data
+from federatedscope.core.data import ClientData, StandaloneDataDict
 from federatedscope.contrib.data.utils import (
+    get_label_distribution,
     adaptive_cluster_clients,
     save_cluster_results,
     sample_data,
 )
-from federatedscope.core.data.base_data import ClientData, StandaloneDataDict
 
 logger = logging.getLogger(__name__)
 
-#  domainnet 数据集
-# domains = ["clipart", "infograph", "painting", "quickdraw", "real", "sketch"]
+# DomainNet domains
+DOMAINNET_DOMAINS = ["clipart", "infograph", "painting", "quickdraw", "real", "sketch"]
+USED_DOMAINS = [
+    "clipart",
+    "painting",
+    "quickdraw",
+    "infograph",
+    "sketch",
+]  # Currently used domains
 
 
 # 取出所有域的共有类别
@@ -51,74 +54,70 @@ def load_common_classes(base_path, domains):
 
 # 随机选择指定数量的类
 def random_select_classes(base_path, num_classes):
-    domains = ["clipart", "infograph", "painting", "quickdraw", "real", "sketch"]
-    all_classes = load_common_classes(base_path, domains)
+    all_classes = load_common_classes(base_path, DOMAINNET_DOMAINS)
     if num_classes > len(all_classes):
         return list(all_classes)
     selected_classes = random.sample(all_classes, num_classes)
     return selected_classes
 
 
-class DomainNetDataset(Dataset):
-    def __init__(self, root_dir, domain, split, class_list, transform=None):
-        """
-        Args:
-            root_dir (string): 数据集根目录
-            domain (string): 域名称（如'clipart', 'painting'等）
-            split (string): 'train' 或 'test'
-            class_list (list): 要加载的类别名称列表（如['zebra', 'dog']）
-            transform (callable): 应用于图像的变换
-        """
+class DomainNetDatasetFull(Dataset):
+    """
+    Custom DomainNet implementation that loads all data from both train and test splits
+    and allows manual splitting later (similar to PACS ImageFolder_Custom)
+    """
+
+    def __init__(self, domain_name, root_dir, class_list, transform=None):
+        self.domain_name = domain_name
         self.root_dir = root_dir
-        self.domain = domain
-        self.split = split
         self.transform = transform
         self.class_list = class_list
+
         logger.info(
-            f"Loading {split} data for domain '{domain}' with classes: {class_list}"
+            f"Loading all data for domain '{domain_name}' with classes: {class_list}"
         )
-        # 读取划分文件
-        split_file = os.path.join(root_dir, f"{domain}_{split}.txt")
-        if not os.path.exists(split_file):
-            raise FileNotFoundError(f"划分文件不存在: {split_file}")
 
-        # 解析文件内容：路径和类别
-        with open(split_file, "r") as f:
-            lines = f.readlines()
-
-        # 提取路径和标签
-        self.data = []
+        # Load data from both train and test splits
+        self.all_data = []
         self.class_to_idx = {}
-        self.idx_to_class = {}
 
-        valid_classes = class_list
         # 创建类别映射
-        sorted_classes = sorted(valid_classes)
+        sorted_classes = sorted(class_list)
         self.class_to_idx = {
             cls_name: idx for idx, cls_name in enumerate(sorted_classes)
         }
-        self.idx_to_class = {
-            idx: cls_name for idx, cls_name in enumerate(sorted_classes)
-        }
 
-        # 第二遍：收集符合条件的数据
-        for line in lines:
-            path, _ = line.strip().split(" ")
-            class_name = os.path.basename(os.path.dirname(path))
+        # Load from both train and test splits
+        for split in ["train", "test"]:
+            split_file = os.path.join(root_dir, f"{domain_name}_{split}.txt")
+            if not os.path.exists(split_file):
+                logger.warning(f"Split file not found: {split_file}")
+                continue
 
-            if class_name in valid_classes:
-                img_path = os.path.join(root_dir, path)
-                label = self.class_to_idx[class_name]
-                self.data.append((img_path, label))
+            with open(split_file, "r") as f:
+                lines = f.readlines()
 
-        if not self.data:
-            raise ValueError(f"在域 {domain} 的{split}集中未找到指定类别的数据")
+            for line in lines:
+                path, _ = line.strip().split(" ")
+                class_name = os.path.basename(os.path.dirname(path))
+
+                if class_name in class_list:
+                    img_path = os.path.join(root_dir, path)
+                    label = self.class_to_idx[class_name]
+                    self.all_data.append((img_path, label))
+
+        if not self.all_data:
+            raise ValueError(f"在域 {domain_name} 中未找到指定类别的数据")
+
+        logger.info(
+            f"Loaded {len(self.all_data)} total samples for domain {domain_name}"
+        )
 
     def __len__(self):
-        return len(self.data)
+        return len(self.all_data)
 
-    def __getitem__(self, idx):
-        img_path, label = self.data[idx]
+    def __getitem__(self, index):
+        img_path, label = self.all_data[index]
 
         try:
             image = Image.open(img_path).convert("RGB")
@@ -126,19 +125,247 @@ class DomainNetDataset(Dataset):
             logger.error(f"无法打开图像: {img_path}")
             return None
 
-        if self.transform:
+        if self.transform is not None:
             image = self.transform(image)
 
         return image, label
 
 
-def load_domainnet_data(config, client_cfgs=None):
+def _load_domain_dataset(
+    domain_name,
+    data_root,
+    train_transform,
+    test_transform,
+    sampled_classes,
+    train_ratio=0.4,
+):
+    """
+    Load a single domain dataset and split into train/test sets.
+    Similar to PACS implementation - load all data first, then split.
+
+    Args:
+        domain_name: Name of the domain dataset
+        data_root: Root directory for data
+        train_transform: Transform for training data
+        test_transform: Transform for test data
+        sampled_classes: List of selected classes
+        train_ratio: Ratio of data to use for training
+
+    Returns:
+        tuple: (train_dataset, test_dataset)
+    """
+    try:
+        # Load all data first (similar to PACS ImageFolder_Custom)
+        full_dataset = DomainNetDatasetFull(
+            domain_name=domain_name, root_dir=data_root, class_list=sampled_classes
+        )
+
+        # Sample data if needed to limit size
+        if len(full_dataset) > 12000:  # Total limit before splitting
+            full_dataset = sample_data(full_dataset, 12000)
+
+        # Randomly shuffle data indices (similar to PACS)
+        all_data = full_dataset.all_data
+        indices = np.arange(len(all_data))
+        np.random.shuffle(indices)
+
+        # Split data into train and test sets
+        train_size = int(len(all_data) * train_ratio)
+        train_indices = indices[:train_size]
+        test_indices = indices[train_size:]
+
+        # Create train dataset with train transform
+        train_dataset = Subset(full_dataset, train_indices)
+        train_dataset.dataset.transform = train_transform
+
+        # Create test dataset with test transform
+        test_dataset = Subset(full_dataset, test_indices)
+        test_dataset.dataset.transform = test_transform
+
+        logger.info(
+            f"Loaded {domain_name} dataset: train={len(train_dataset)}, test={len(test_dataset)}"
+        )
+        return train_dataset, test_dataset
+
+    except Exception as e:
+        logger.error(f"Failed to load {domain_name} dataset: {e}")
+        raise e
+
+
+def _create_federated_data_dict(
+    config,
+    client_cfgs,
+    train_dataset,
+    test_dataset,
+    domain_name,
+    client_num,
+):
+    """
+    Create federated data dictionary for a single domain dataset
+
+    Args:
+        config: Original configuration object
+        client_cfgs: Client-specific configurations
+        train_dataset: Training dataset
+        test_dataset: Test dataset
+        domain_name: Name of the domain for logging
+        client_num: Number of clients for this domain
+
+    Returns:
+        dict: Federated data dictionary
+    """
+    # Create temporary config for this domain
+    tmp_config = config.clone()
+    tmp_config.merge_from_list(["federate.client_num", client_num])
+
+    # Use BaseDataTranslator to convert to federated format
+    translator = BaseDataTranslator(tmp_config, client_cfgs)
+
+    # Create dataset tuple (train, val, test) - using test for both val and test
+    split_datasets = (train_dataset, [], test_dataset)
+    data_dict = translator(split_datasets)
+
+    logger.info(
+        f"Successfully created federated {domain_name} dataset with {len(data_dict) - 1} clients"
+    )
+    return data_dict
+
+
+def _merge_data_dictionaries(config, data_dicts):
+    """
+    Merge multiple federated data dictionaries into a single one
+
+    Args:
+        config: Original configuration object
+        data_dicts: List of federated data dictionaries to merge
+
+    Returns:
+        StandaloneDataDict: Merged federated data dictionary
+    """
+
+    total_clients = sum(len(data_dict) for data_dict in data_dicts) - len(data_dicts)
+
+    # Create merged config
+    tmp_config_merged = config.clone()
+    tmp_config_merged.merge_from_list(["federate.client_num", total_clients])
+
+    # Create merged data dictionary
+    merged_data_dict = {}
+
+    # Merge server data (ID=0)
+    server_train = ConcatDataset([data_dict[0].train_data for data_dict in data_dicts])
+    server_val = ConcatDataset([data_dict[0].val_data for data_dict in data_dicts])
+    server_test = ConcatDataset([data_dict[0].test_data for data_dict in data_dicts])
+    merged_data_dict[0] = ClientData(
+        tmp_config_merged, train=server_train, val=server_val, test=server_test
+    )
+
+    # Add clients from each data dictionary with proper ID offset
+    cnt = 1
+    for data_dict in data_dicts:
+        for client_id, client_data in data_dict.items():
+            if client_id == 0:
+                continue
+            if cnt not in merged_data_dict:
+                merged_data_dict[cnt] = ClientData(
+                    tmp_config_merged,
+                    train=client_data.train_data,
+                    val=client_data.val_data,
+                    test=client_data.test_data,
+                )
+            cnt += 1
+
+    logger.info(f"Merged data dictionary created with {len(merged_data_dict)} clients")
+    # 输出每个客户端训练集和测试集的大小
+    for client_id, client_data in merged_data_dict.items():
+        train_size = len(client_data.train_data) if client_data.train_data else 0
+        val_size = len(client_data.val_data) if client_data.val_data else 0
+        test_size = len(client_data.test_data) if client_data.test_data else 0
+        logger.info(
+            f"Client {client_id}: train size={train_size}, val size={val_size}, test size={test_size}"
+        )
+    # Create final StandaloneDataDict
+    return StandaloneDataDict(merged_data_dict, tmp_config_merged)
+
+
+def _perform_clustering_analysis(data_dict, data_root, num_classes):
+    """
+    Perform clustering analysis on federated data
+
+    Args:
+        data_dict: Federated data dictionary
+        data_root: Root directory for saving results
+        num_classes: Number of classes
+    """
+    try:
+        # Collect training and test subsets
+        train_subsets = []
+        test_subsets = []
+
+        # Extract data from each client (skip server id=0)
+        for client_id in range(1, len(data_dict)):
+            client_data = data_dict[client_id]
+
+            # Access original datasets rather than DataLoaders
+            if (
+                hasattr(client_data, "train_data")
+                and client_data.train_data is not None
+            ):
+                train_subsets.append(client_data.train_data)
+            if hasattr(client_data, "test_data") and client_data.test_data is not None:
+                test_subsets.append(client_data.test_data)
+
+        logger.info(
+            f"收集到 {len(train_subsets)} 个训练子集, {len(test_subsets)} 个测试子集"
+        )
+
+        if train_subsets and test_subsets:
+            # Calculate label distributions
+            logger.info("计算客户端标签分布...")
+            train_distributions = get_label_distribution(
+                train_subsets, num_classes=num_classes
+            )
+            test_distributions = get_label_distribution(
+                test_subsets, num_classes=num_classes
+            )
+
+            # Perform clustering
+            logger.info("执行客户端聚类...")
+            peer_communities = adaptive_cluster_clients(train_distributions)
+
+            logger.info(f"聚类结果: {peer_communities}")
+
+            # Save clustering results
+            cluster_file = os.path.join(data_root, "peer_communities.json")
+            save_cluster_results(
+                cluster_file, train_distributions, test_distributions, peer_communities
+            )
+
+        else:
+            logger.warning("无法获取客户端数据子集，跳过聚类步骤")
+
+    except Exception as e:
+        logger.error(f"聚类过程中出现错误: {e}")
+        logger.info("继续返回联邦数据，但没有聚类信息")
+
+
+def load_domainnet_dataset(config, client_cfgs=None):
+    """
+    Load DomainNet dataset for federated learning.
+
+    Args:
+        config: Configuration object containing data settings
+        client_cfgs: Client-specific configurations (optional)
+
+    Returns:
+        tuple: (datadict, config) containing federated dataset
+    """
     data_root = config.data.root
-    alpha = config.data.splitter_args[0]["alpha"]
     total_clients = config.federate.client_num
     classes = config.model.out_channels
     sampled_classes = random_select_classes(data_root, classes)
 
+    # Define data transforms
     transform_train = transforms.Compose(
         [
             transforms.Resize([256, 256]),
@@ -154,143 +381,60 @@ def load_domainnet_data(config, client_cfgs=None):
         ]
     )
 
-    train_ds = []
-    test_ds = []
-    # 加载数据集
-    for domain in ["clipart", "painting", "quickdraw", "infograph", "sketch"]:
-        train_ds.append(
-            DomainNetDataset(
-                root_dir=data_root,
-                domain=domain,
-                split="train",
-                class_list=sampled_classes,
-                transform=transform_train,
-            )
-        )
-        test_ds.append(
-            DomainNetDataset(
-                root_dir=data_root,
-                domain=domain,
-                split="test",
-                class_list=sampled_classes,
-                transform=transform_test,
-            )
+    # Load all domain datasets
+    domain_names = USED_DOMAINS
+    clients_per_domain = config.data.clients_per_domain
+    train_ratio = config.data.splits[0]
+
+    data_dicts = []
+
+    for domain_name, client_num in zip(domain_names, clients_per_domain):
+        # Load domain dataset
+        train_dataset, test_dataset = _load_domain_dataset(
+            domain_name,
+            data_root,
+            transform_train,
+            transform_test,
+            sampled_classes,
+            train_ratio,
         )
 
-        # train_samples_num.append(len(train_ds[-1]))
-
-    train_ds = [ds if len(ds) <= 10000 else sample_data(ds, 10000) for ds in train_ds]
-    test_ds = [ds if len(ds) <= 2000 else sample_data(ds, 2000) for ds in test_ds]
-    logger.info(f"Loaded {len(train_ds)} domains with {len(test_ds)} test datasets.")
-    train_samples_num = []
-    for ds in train_ds:
-        train_samples_num.append(len(ds))
-    logger.info(f"Train samples per domain: {train_samples_num}")
-    # 划分训练集
-    train_splits = []
-    # total_samples = sum(train_samples_num)
-    client_for_each_domain = [int(0.2 * total_clients)] * 5
-    # 确保总数正确
-    for ds, num_clients in zip(train_ds, client_for_each_domain):
-        train_idxs = dirichlet_split(ds, num_clients, alpha=alpha)
-        train_splits.extend([Subset(ds, idxs) for idxs in train_idxs])
-    logger.info(
-        f"Created {len(train_splits)} training splits across {len(train_ds)} domains with {total_clients} clients."
-    )
-    # 划分测试集
-    test_splits = []
-    for ds, num_clients in zip(test_ds, client_for_each_domain):
-        test_idxs = dirichlet_split(ds, num_clients, alpha=alpha)
-        test_splits.extend([Subset(ds, idxs) for idxs in test_idxs])
-    logger.info(
-        f"Created {len(test_splits)} test splits across {len(test_ds)} domains with {total_clients} clients."
-    )
-    # 获取标签分布
-    train_label_dist = get_label_distribution(
-        train_splits, num_classes=len(sampled_classes)
-    )
-    test_label_dist = get_label_distribution(
-        test_splits, num_classes=len(sampled_classes)
-    )
-
-    # 按照分布聚类客户端
-    peer_communities = adaptive_cluster_clients(train_label_dist)
-    logger.info(f"Peer communities: {peer_communities}")
-    save_cluster_results(
-        os.path.join(data_root, "peer_communities.json"),
-        train_label_dist,
-        test_label_dist,
-        peer_communities,
-    )
-
-    client_data_dict = {}
-    for cid, (tr, te) in enumerate(zip(train_splits, test_splits), start=1):
-        client_data_dict[cid] = ClientData(
-            client_cfg=config, train=tr, val=None, test=te
+        # Create federated data dictionary for this domain
+        data_dict = _create_federated_data_dict(
+            config,
+            client_cfgs,
+            train_dataset,
+            test_dataset,
+            domain_name,
+            client_num,
         )
-    fs_data = StandaloneDataDict(client_data_dict, config)
-    return fs_data, config
+        data_dicts.append(data_dict)
+
+    # Merge all data dictionaries
+    merged_data_dict = _merge_data_dictionaries(config, data_dicts)
+
+    # Perform clustering analysis
+    _perform_clustering_analysis(merged_data_dict, data_root, len(sampled_classes))
+
+    return merged_data_dict, config
 
 
 def call_domainnet_data(config, client_cfgs=None):
     """
-    Load DomainNet data for FederatedScope.
+    Entry point for DomainNet dataset registration.
+
+    Args:
+        config: Configuration object
+        client_cfgs: Client-specific configurations (optional)
+
+    Returns:
+        tuple: (datadict, config) if dataset type matches, None otherwise
     """
-    if config.data.type == "domainnet":
-        return load_domainnet_data(config, client_cfgs)
+    if config.data.type.lower() == "domainnet":
+        logger.info("Loading DomainNet dataset...")
+        return load_domainnet_dataset(config, client_cfgs)
+    return None
 
 
-if __name__ == "__main__":
-    DATA_ROOT = "data/domainnet"
-    # all_classes = load_all_classes(DATA_ROOT)
-    sampled_classes = random_select_classes(DATA_ROOT, 100)
-
-    transforms = transforms.Compose(
-        [
-            transforms.Resize((224, 224)),
-            transforms.Grayscale(num_output_channels=3),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ]
-    )
-
-    clipart_train = DomainNetDataset(
-        root_dir=DATA_ROOT,
-        domain="clipart",
-        split="train",
-        class_list=sampled_classes,
-        transform=transforms,
-    )
-    print(
-        f"Loaded {len(clipart_train)} training samples from 'clipart' domain with classes: {sampled_classes}"
-    )
-
-    clipart_test = DomainNetDataset(
-        root_dir=DATA_ROOT,
-        domain="clipart",
-        split="test",
-        class_list=sampled_classes,
-        transform=transforms,
-    )
-    print(
-        f"Loaded {len(clipart_test)} test samples from 'clipart' domain with classes: {sampled_classes}"
-    )
-
-    clipart_train_idxs = dirichlet_split(clipart_train, num_clients=10, alpha=0.5)
-    train_splits = [Subset(clipart_train, idxs) for idxs in clipart_train_idxs]
-    clipart_train_label_dist = get_label_distribution(
-        train_splits, num_classes=len(sampled_classes)
-    )
-
-    clipart_train_dataloaders_0 = torch.utils.data.DataLoader(
-        train_splits[0],
-        batch_size=32,
-        shuffle=True,
-        num_workers=4,
-    )
-
-else:
-    # 如果不是直接运行此脚本，则注册数据加载函数
-    from federatedscope.register import register_data
-
-    register_data("domainnet", call_domainnet_data)
+# Register the DomainNet dataset
+register_data("domainnet", call_domainnet_data)

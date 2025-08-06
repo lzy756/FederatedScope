@@ -5,21 +5,22 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 400
-  client_num: 100
+  total_round_num: 40
+  client_num: 60
   method: mix
   sample_client_num: 20 # 每轮选取的用户数
-  
   
 data:
   root: data/PACS/
   type: pacs
-  consistent_label_distribution: False
   splitter: lda
-  splitter_args: [{'alpha': 0.1}] # 控制数据分布的参数
-  splits: [0.8, 0, 0.2]
-  clients_per_domain: [25, 25, 25, 25]
-  classes_per_client_per_domain: [3, 3, 3, 3]
+  splitter_args: [{'alpha': 0.7}] # 控制数据分布的参数
+  splits: [0.4, 0, 0.6]
+  clients_per_domain: [15, 15, 15, 15]
+
+eval:
+  split: ['test']
+
 dataloader:
   batch_size: 64
 model:
@@ -44,10 +45,10 @@ eval:
 trainer:
   type: cvtrainer
 aggregator:
-  lambda_: 0.01 # 控制FedSAK的权重，为0时返回模型的平均值
+  lambda_: 0 # 控制FedSAK的权重，为0时返回模型的平均值
   lr_shared: 1 # 0 使用FedAvg聚合方式；1 使用MGDA聚合方式
-  intra_round: 4 # 控制MGDA的次数 设置为0时表示不启动
-  inter_round: 1 # 控制FedSAK的次数
+  intra_round: 0 # 控制MGDA的次数 设置为0时表示不启动
+  inter_round: 1 # 控制FedSAK的次数, 设置为0时表示不启动
 
 # personalization:
 #     local_param: ['bn', 'norms']

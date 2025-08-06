@@ -5,19 +5,19 @@ early_stop:
 seed: 12345
 federate:
   mode: standalone
-  total_round_num: 400
-  client_num: 60
+  total_round_num: 100
+  client_num: 100
   method: local
   sample_client_num: 20
 data:
   root: data/PACS/
   type: pacs
-  consistent_label_distribution: False
+  consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.1}] # 控制域内数据分布的参数
-  splits: [0.8, 0, 0.2]
-  clients_per_domain: [15, 15, 15, 15]
-  classes_per_client_per_domain: [3, 3, 3, 3]
+  splitter_args: [{'alpha': 0.7}] # 控制域内数据分布的参数
+  splits: [0.4, 0, 0.6]
+  clients_per_domain: [25, 25, 25, 25]
+
 
 dataloader:
   batch_size: 64
@@ -39,6 +39,6 @@ criterion:
 trainer:
   type: cvtrainer
 eval:
-  freq: 5
+  freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss

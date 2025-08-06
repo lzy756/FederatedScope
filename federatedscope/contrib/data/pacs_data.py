@@ -281,4 +281,4 @@ if __name__ == "__main__":
     global_cfg.data.type = "pacs"
     data, cfg = load_pacs(global_cfg)
 else:
-    register_data("pacs", call_pacs_data)
+    register_data("pacs111", call_pacs_data)

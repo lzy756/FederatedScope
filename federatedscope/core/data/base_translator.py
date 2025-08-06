@@ -19,6 +19,7 @@ class BaseDataTranslator:
         FL split (``split_to_client()``) -> ``StandaloneDataDict``
 
     """
+
     def __init__(self, global_cfg, client_cfgs=None):
         """
         Convert data to `StandaloneDataDict`.
@@ -74,9 +75,10 @@ class BaseDataTranslator:
             splits = self.global_cfg.data.splits
         if isinstance(dataset, tuple):
             # No need to split train/val/test for tuple dataset.
-            error_msg = 'If dataset is tuple, it must contains ' \
-                        'train, valid and test split.'
-            assert len(dataset) == len(['train', 'val', 'test']), error_msg
+            error_msg = (
+                "If dataset is tuple, it must contains " "train, valid and test split."
+            )
+            assert len(dataset) == len(["train", "val", "test"]), error_msg
             return [dataset[0], dataset[1], dataset[2]]
 
         index = np.random.permutation(np.arange(len(dataset)))
@@ -85,15 +87,14 @@ class BaseDataTranslator:
 
         if isinstance(dataset, Dataset):
             train_dataset = Subset(dataset, index[:train_size])
-            val_dataset = Subset(dataset,
-                                 index[train_size:train_size + val_size])
-            test_dataset = Subset(dataset, index[train_size + val_size:])
+            val_dataset = Subset(dataset, index[train_size : train_size + val_size])
+            test_dataset = Subset(dataset, index[train_size + val_size :])
         else:
             train_dataset = [dataset[x] for x in index[:train_size]]
             val_dataset = [
-                dataset[x] for x in index[train_size:train_size + val_size]
+                dataset[x] for x in index[train_size : train_size + val_size]
             ]
-            test_dataset = [dataset[x] for x in index[train_size + val_size:]]
+            test_dataset = [dataset[x] for x in index[train_size + val_size :]]
         return train_dataset, val_dataset, test_dataset
 
     def split_to_client(self, train, val, test):
@@ -114,30 +115,30 @@ class BaseDataTranslator:
             split_train = self.splitter(train)
             if self.global_cfg.data.consistent_label_distribution:
                 try:
-                    train_label_distribution = [[j[1] for j in x]
-                                                for x in split_train]
+                    train_label_distribution = [[j[1] for j in x] for x in split_train]
                 except:
                     logger.warning(
-                        'Cannot access train label distribution for '
-                        'splitter.')
+                        "Cannot access train label distribution for " "splitter."
+                    )
         if len(val) > 0:
             split_val = self.splitter(val, prior=train_label_distribution)
         if len(test) > 0:
             split_test = self.splitter(test, prior=train_label_distribution)
 
         # Build data dict with `ClientData`, key `0` for server.
-        data_dict = {
-            0: ClientData(self.global_cfg, train=train, val=val, test=test)
-        }
+        data_dict = {0: ClientData(self.global_cfg, train=train, val=val, test=test)}
         for client_id in range(1, client_num + 1):
             if self.client_cfgs is not None:
                 client_cfg = self.global_cfg.clone()
                 client_cfg.merge_from_other_cfg(
-                    self.client_cfgs.get(f'client_{client_id}'))
+                    self.client_cfgs.get(f"client_{client_id}")
+                )
             else:
                 client_cfg = self.global_cfg
-            data_dict[client_id] = ClientData(client_cfg,
-                                              train=split_train[client_id - 1],
-                                              val=split_val[client_id - 1],
-                                              test=split_test[client_id - 1])
+            data_dict[client_id] = ClientData(
+                client_cfg,
+                train=split_train[client_id - 1],
+                val=split_val[client_id - 1],
+                test=split_test[client_id - 1],
+            )
         return data_dict

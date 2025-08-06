@@ -14,7 +14,6 @@ from federatedscope.contrib.data.utils import (
     get_label_distribution,
     adaptive_cluster_clients,
     save_cluster_results,
-    uniform_split,
 )
 from torch.utils.data import ConcatDataset, Subset
 import numpy as np
@@ -110,7 +109,6 @@ def _create_federated_data_dict(
     test_dataset,
     domain_name,
     client_num,
-    classes_per_client,
 ):
     """
     Create federated data dictionary for a single domain dataset
@@ -129,33 +127,19 @@ def _create_federated_data_dict(
     tmp_config = config.clone()
     tmp_config.merge_from_list(["federate.client_num", client_num])
 
+    # Create temporary config for this domain (10 clients)
+    tmp_config = config.clone()
+    tmp_config.merge_from_list(["federate.client_num", client_num])
+
     # Use BaseDataTranslator to convert to federated format
-    # translator = BaseDataTranslator(tmp_config, client_cfgs)
-    splitter = get_splitter(tmp_config)
-    if splitter is None:
-        raise ValueError(f"Splitter not found for {domain_name}")
-    train_data_lists = splitter(train_dataset, classes_per_client=classes_per_client)
-    test_data_lists = splitter(test_dataset, classes_per_client=classes_per_client)
-    # test_data_indices = uniform_split(test_dataset, client_num)
-    # test_data_lists = [Subset(test_dataset, indices) for indices in test_data_indices]
-    data_dict = {
-        client_id: ClientData(
-            tmp_config,
-            train=train_data_lists[client_id - 1],
-            val=test_data_lists[client_id - 1],
-            test=test_data_lists[client_id - 1],
-        )
-        for client_id in range(1, client_num + 1)
-    }
-    data_dict[0] = ClientData(
-        tmp_config,
-        train=train_dataset,
-        val=test_dataset,
-        test=test_dataset,
-    )  # Server data
+    translator = BaseDataTranslator(tmp_config, client_cfgs)
+
+    # Create dataset tuple (train, val, test) - using test for both val and test
+    split_datasets = (train_dataset, [], test_dataset)
+    data_dict = translator(split_datasets)
 
     logger.info(
-        f"Successfully created federated {domain_name} dataset with {len(data_dict)} clients"
+        f"Successfully created federated {domain_name} dataset with {len(data_dict) - 1} clients"
     )
     return data_dict
 
@@ -172,9 +156,7 @@ def _merge_data_dictionaries(config, data_dicts):
         StandaloneDataDict: Merged federated data dictionary
     """
 
-    total_clients = sum(len(data_dict) for data_dict in data_dicts) - len(
-        data_dicts
-    )  # Exclude server ID=0
+    total_clients = sum(len(data_dict) for data_dict in data_dicts) - len(data_dicts)
 
     # Create merged config
     tmp_config_merged = config.clone()
@@ -210,9 +192,10 @@ def _merge_data_dictionaries(config, data_dicts):
     # 输出每个客户端训练集和测试集的大小
     for client_id, client_data in merged_data_dict.items():
         train_size = len(client_data.train_data) if client_data.train_data else 0
+        val_size = len(client_data.val_data) if client_data.val_data else 0
         test_size = len(client_data.test_data) if client_data.test_data else 0
         logger.info(
-            f"Client {client_id}: train size={train_size}, test size={test_size}"
+            f"Client {client_id}: train size={train_size}, val size={val_size}, test size={test_size}"
         )
     # Create final StandaloneDataDict
     return StandaloneDataDict(merged_data_dict, tmp_config_merged)
@@ -311,17 +294,12 @@ def load_pacs_dataset(config, client_cfgs=None):
 
     # Load all domain datasets
     domain_names = ["art_painting", "cartoon", "photo", "sketch"]
-    # clients_per_domain = [9, 9, 1, 1]
-    # classes_per_client_per_domain = [2, 2, 7, 7]
     clients_per_domain = config.data.clients_per_domain
-    classes_per_client_per_domain = config.data.classes_per_client_per_domain
     train_ratio = config.data.splits[0]
 
     data_dicts = []
 
-    for domain_name, client_num, classes_per_client in zip(
-        domain_names, clients_per_domain, classes_per_client_per_domain
-    ):
+    for domain_name, client_num in zip(domain_names, clients_per_domain):
         # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
             domain_name, data_root, transform_train, transform_test, train_ratio
@@ -335,7 +313,6 @@ def load_pacs_dataset(config, client_cfgs=None):
             test_dataset,
             domain_name,
             client_num,
-            classes_per_client,
         )
         data_dicts.append(data_dict)
 
