@@ -23,8 +23,8 @@ AGGREGATOR_TYPE = {
     "fedopt": "fedopt",
     "fedsak": "fedsak",
     "fedgs": "fedgs",
-    "mix": "mix",  # MixFed, using FedGSAggregator
-    "mgda": "mgda",  # MGDA
+    "mix": "mix",
+    "mgda": "mgda",
 }
 
 CLIENTS_TYPE = {

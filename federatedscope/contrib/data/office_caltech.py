@@ -1,12 +1,8 @@
 import os
 import logging
-import json
 import numpy as np
 from torchvision import transforms
-from torchvision.datasets import ImageFolder, DatasetFolder
-from sklearn.cluster import DBSCAN
-from scipy.stats import entropy
-from federatedscope.core.auxiliaries.splitter_builder import get_splitter
+from torchvision.datasets import ImageFolder
 from federatedscope.core.data import BaseDataTranslator
 from federatedscope.register import register_data
 from federatedscope.core.data import ClientData, StandaloneDataDict
@@ -14,42 +10,102 @@ from federatedscope.contrib.data.utils import (
     get_label_distribution,
     adaptive_cluster_clients,
     save_cluster_results,
-    uniform_split,
 )
-from torch.utils.data import ConcatDataset, Subset
-import numpy as np
+from torch.utils.data import ConcatDataset, Subset, Dataset
 
 logger = logging.getLogger(__name__)
 
 
-class ImageFolder_Custom(DatasetFolder):
+class OfficeFullImages:
     """
-    Custom ImageFolder implementation for Office Caltech dataset.
-    Loads all data without splitting into train/test subsets.
+    Helper class to load all images from a specific domain and classes for Office Caltech
     """
 
-    def __init__(self, domain_name, root, transform=None):
+    def __init__(self, domain_name, root):
         self.domain_name = domain_name
         self.root = root
-        self.transform = transform
+
+        logger.info(f"Loading all data for domain '{domain_name}'")
 
         # Build the path to the Office Caltech dataset
-        dataset_path = os.path.join(self.root, "Office_Caltech_10", self.domain_name)
+        dataset_path = os.path.join(self.root, "office_caltech_10", self.domain_name)
         if not os.path.exists(dataset_path):
             # Fallback to direct domain name path
             dataset_path = os.path.join(self.root, self.domain_name)
 
-        self.imagefolder_obj = ImageFolder(dataset_path, self.transform)
-        self.all_data = self.imagefolder_obj.samples
+        # Use ImageFolder to get all samples
+        from torchvision.datasets import ImageFolder
+
+        imagefolder_obj = ImageFolder(dataset_path, transform=None)
+        self.all_data = imagefolder_obj.samples
+
+        # Store class information and standardize class names
+        original_classes = imagefolder_obj.classes
+        original_class_to_idx = imagefolder_obj.class_to_idx
+
+        # Standardize class names: 'back_pack' -> 'backpack'
+        self.classes = []
+        self.class_to_idx = {}
+        standardized_samples = []
+
+        # Create mapping from original to standardized class names
+        class_name_mapping = {}
+        for i, class_name in enumerate(original_classes):
+            standardized_name = class_name.replace("back_pack", "backpack")
+            self.classes.append(standardized_name)
+            self.class_to_idx[standardized_name] = i
+            class_name_mapping[original_class_to_idx[class_name]] = i
+
+        # Update samples with standardized class indices
+        for sample_path, original_label in self.all_data:
+            standardized_label = class_name_mapping[original_label]
+            standardized_samples.append((sample_path, standardized_label))
+
+        self.all_data = standardized_samples
+        self.num_classes = len(self.classes)
+
+        logger.info(
+            f"Loaded {len(self.all_data)} total samples for domain {domain_name}"
+        )
+        logger.info(f"Classes: {self.classes}")
+
+    def __len__(self):
+        return len(self.all_data)
+
+
+class OfficeDataset(Dataset):
+    """
+    Custom Office Caltech dataset implementation for train/test splits
+    """
+
+    def __init__(self, data_list, class_to_idx, classes, num_classes, transform=None):
+        """
+        Initialize Office dataset with specific data list
+
+        Args:
+            data_list: List of (img_path, label) tuples
+            class_to_idx: Dictionary mapping class names to indices
+            classes: List of class names
+            num_classes: Number of classes
+            transform: Transform to apply to images
+        """
+        self.all_data = data_list
+        self.class_to_idx = class_to_idx
+        self.classes = classes
+        self.num_classes = num_classes
+        self.transform = transform
 
     def __len__(self):
         return len(self.all_data)
 
     def __getitem__(self, index):
-        path = self.all_data[index][0]
-        target = self.all_data[index][1]
+        path, target = self.all_data[index]
         target = int(target)
-        img = self.imagefolder_obj.loader(path)
+
+        # Load image using PIL
+        from PIL import Image
+
+        img = Image.open(path).convert("RGB")
 
         if self.transform is not None:
             img = self.transform(img)
@@ -74,11 +130,17 @@ def _load_domain_dataset(
         tuple: (train_dataset, test_dataset)
     """
     try:
-        # Load all data
-        dataset = ImageFolder_Custom(domain_name=domain_name, root=data_root)
+        # Load all data first using OfficeFullImages
+        full_images = OfficeFullImages(domain_name=domain_name, root=data_root)
+
+        logger.info(
+            f"Loading {domain_name} dataset from {data_root}: classes={full_images.classes}, num_classes={full_images.num_classes}, class_to_idx={full_images.class_to_idx}"
+        )
+
+        # Get all data
+        all_data = full_images.all_data
 
         # Randomly shuffle data indices
-        all_data = dataset.all_data
         indices = np.arange(len(all_data))
         np.random.shuffle(indices)
 
@@ -87,11 +149,29 @@ def _load_domain_dataset(
         train_indices = indices[:train_size]
         test_indices = indices[train_size:]
 
-        train_dataset = Subset(dataset, train_indices)
-        train_dataset.dataset.transform = train_transform
+        # Create train data list
+        train_data = [all_data[i] for i in train_indices]
 
-        test_dataset = Subset(dataset, test_indices)
-        test_dataset.dataset.transform = test_transform
+        # Create test data list
+        test_data = [all_data[i] for i in test_indices]
+
+        # Create independent train dataset
+        train_dataset = OfficeDataset(
+            data_list=train_data,
+            class_to_idx=full_images.class_to_idx,
+            classes=full_images.classes,
+            num_classes=full_images.num_classes,
+            transform=train_transform,
+        )
+
+        # Create independent test dataset
+        test_dataset = OfficeDataset(
+            data_list=test_data,
+            class_to_idx=full_images.class_to_idx,
+            classes=full_images.classes,
+            num_classes=full_images.num_classes,
+            transform=test_transform,
+        )
 
         logger.info(
             f"Loaded {domain_name} dataset: train={len(train_dataset)}, test={len(test_dataset)}"
@@ -109,8 +189,7 @@ def _create_federated_data_dict(
     train_dataset,
     test_dataset,
     domain_name,
-    client_num=10,
-    classes_per_client=2,
+    client_num,
 ):
     """
     Create federated data dictionary for a single domain dataset
@@ -123,39 +202,21 @@ def _create_federated_data_dict(
         domain_name: Name of the domain for logging
 
     Returns:
-        dict: Federated data dictionary with 10 clients
+        dict: Federated data dictionary with client_num clients
     """
-    # Create temporary config for this domain (10 clients)
+    # Create temporary config for this domain (client_num clients)
     tmp_config = config.clone()
     tmp_config.merge_from_list(["federate.client_num", client_num])
 
     # Use BaseDataTranslator to convert to federated format
-    # translator = BaseDataTranslator(tmp_config, client_cfgs)
-    splitter = get_splitter(tmp_config)
-    if splitter is None:
-        raise ValueError(f"Splitter not found for {domain_name}")
-    train_data_lists = splitter(train_dataset, classes_per_client=classes_per_client)
-    test_data_lists = splitter(test_dataset, classes_per_client=classes_per_client)
-    # test_data_indices = uniform_split(test_dataset, client_num)
-    # test_data_lists = [Subset(test_dataset, indices) for indices in test_data_indices]
-    data_dict = {
-        client_id: ClientData(
-            tmp_config,
-            train=train_data_lists[client_id - 1],
-            val=test_data_lists[client_id - 1],
-            test=test_data_lists[client_id - 1],
-        )
-        for client_id in range(1, client_num + 1)
-    }
-    data_dict[0] = ClientData(
-        tmp_config,
-        train=train_dataset,
-        val=test_dataset,
-        test=test_dataset,
-    )  # Server data
+    translator = BaseDataTranslator(tmp_config, client_cfgs)
+
+    # Create dataset tuple (train, val, test) - using test for both val and test
+    split_datasets = (train_dataset, [], test_dataset)
+    data_dict = translator(split_datasets)
 
     logger.info(
-        f"Successfully created federated {domain_name} dataset with {len(data_dict)} clients"
+        f"Successfully created federated {domain_name} dataset with {len(data_dict) - 1} clients"
     )
     return data_dict
 
@@ -172,7 +233,7 @@ def _merge_data_dictionaries(config, data_dicts):
         StandaloneDataDict: Merged federated data dictionary
     """
 
-    total_clients = len(data_dicts) * 10  # Each dict has 10 clients
+    total_clients = sum(len(data_dict) for data_dict in data_dicts) - len(data_dicts)
 
     # Create merged config
     tmp_config_merged = config.clone()
@@ -205,18 +266,19 @@ def _merge_data_dictionaries(config, data_dicts):
             cnt += 1
 
     logger.info(f"Merged data dictionary created with {len(merged_data_dict)} clients")
-    # 输出每个客户端训练集和测试集的大小
+    # Log the size of training and test sets for each client
     for client_id, client_data in merged_data_dict.items():
         train_size = len(client_data.train_data) if client_data.train_data else 0
+        val_size = len(client_data.val_data) if client_data.val_data else 0
         test_size = len(client_data.test_data) if client_data.test_data else 0
         logger.info(
-            f"Client {client_id}: train size={train_size}, test size={test_size}"
+            f"Client {client_id}: train size={train_size}, val size={val_size}, test size={test_size}"
         )
     # Create final StandaloneDataDict
     return StandaloneDataDict(merged_data_dict, tmp_config_merged)
 
 
-def _perform_clustering_analysis(data_dict, data_root):
+def _perform_clustering_analysis(data_dict, data_root, num_classes):
     """
     Perform clustering analysis on federated data
 
@@ -243,20 +305,20 @@ def _perform_clustering_analysis(data_dict, data_root):
                 test_subsets.append(client_data.test_data)
 
         logger.info(
-            f"收集到 {len(train_subsets)} 个训练子集, {len(test_subsets)} 个测试子集"
+            f"Collected {len(train_subsets)} training subsets, {len(test_subsets)} test subsets"
         )
 
         if train_subsets and test_subsets:
             # Calculate label distributions
-            logger.info("计算客户端标签分布...")
-            train_distributions = get_label_distribution(train_subsets, num_classes=10)
-            test_distributions = get_label_distribution(test_subsets, num_classes=10)
+            logger.info("Calculating client label distributions...")
+            train_distributions = get_label_distribution(train_subsets, num_classes)
+            test_distributions = get_label_distribution(test_subsets, num_classes)
 
             # Perform clustering
-            logger.info("执行客户端聚类...")
+            logger.info("Performing client clustering...")
             peer_communities = adaptive_cluster_clients(train_distributions)
 
-            logger.info(f"聚类结果: {peer_communities}")
+            logger.info(f"Clustering results: {peer_communities}")
 
             # Save clustering results
             cluster_file = os.path.join(data_root, "peer_communities.json")
@@ -265,11 +327,15 @@ def _perform_clustering_analysis(data_dict, data_root):
             )
 
         else:
-            logger.warning("无法获取客户端数据子集，跳过聚类步骤")
+            logger.warning(
+                "Unable to obtain client data subsets, skipping clustering step"
+            )
 
     except Exception as e:
-        logger.error(f"聚类过程中出现错误: {e}")
-        logger.info("继续返回联邦数据，但没有聚类信息")
+        logger.error(f"Error occurred during clustering process: {e}")
+        logger.info(
+            "Continuing to return federated data, but without clustering information"
+        )
 
 
 def load_office_caltech_dataset(config, client_cfgs=None):
@@ -284,24 +350,26 @@ def load_office_caltech_dataset(config, client_cfgs=None):
         tuple: (datadict, config) containing federated dataset
     """
     data_root = config.data.root
-
-    # Define data transforms specific to Office Caltech
+    num_classes = config.model.out_channels
+    # Define data transforms
     transform_train = transforms.Compose(
         [
-            transforms.Resize((256, 256)),
-            transforms.RandomCrop((224, 224)),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.ToTensor(),
+            transforms.Resize((256, 256)),  # Resize to 256x256 first
+            transforms.RandomCrop((224, 224)),  # Random crop to 224x224
+            transforms.RandomHorizontalFlip(p=0.5),  # Random horizontal flip
+            transforms.ToTensor(),  # Convert to tensor
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),
+            ),  # Normalization
         ]
     )
 
     transform_test = transforms.Compose(
         [
-            transforms.Resize((256, 256)),
-            transforms.CenterCrop((224, 224)),
+            transforms.Resize((256, 256)),  # Resize to 256x256
+            transforms.CenterCrop(
+                (224, 224)
+            ),  # Center crop to avoid random factors affecting evaluation
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
@@ -310,14 +378,11 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     # Load all domain datasets
     domain_names = ["caltech", "amazon", "webcam", "dslr"]
     clients_per_domain = config.data.clients_per_domain
-    classes_per_client_per_domain = config.data.classes_per_client_per_domain
     train_ratio = config.data.splits[0]
 
     data_dicts = []
 
-    for domain_name, client_num, classes_per_client in zip(
-        domain_names, clients_per_domain, classes_per_client_per_domain
-    ):
+    for domain_name, client_num in zip(domain_names, clients_per_domain):
         # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
             domain_name, data_root, transform_train, transform_test, train_ratio
@@ -331,7 +396,6 @@ def load_office_caltech_dataset(config, client_cfgs=None):
             test_dataset,
             domain_name,
             client_num,
-            classes_per_client,
         )
         data_dicts.append(data_dict)
 
@@ -339,7 +403,7 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     merged_data_dict = _merge_data_dictionaries(config, data_dicts)
 
     # Perform clustering analysis
-    _perform_clustering_analysis(merged_data_dict, data_root)
+    _perform_clustering_analysis(merged_data_dict, data_root, num_classes)
 
     return merged_data_dict, config
 

@@ -153,3 +153,6 @@ scripts/test/crossdomain_digit/mgda_crossdomain_digit.yaml
 environment.yml
 formula.md
 papers/NeurIPS-2023-federated-multi-objective-learning-Paper-Conference.pdf
+
+
+pretrained_models/

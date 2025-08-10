@@ -1,0 +1,45 @@
+use_gpu: True
+device: 1
+early_stop:
+  patience: 0
+seed: 42
+federate:
+  mode: standalone
+  total_round_num: 200
+  client_num: 40
+  method: local
+
+
+data:
+  root: data/PACS/
+  type: pacs
+  consistent_label_distribution: True
+  splitter: lda
+  splitter_args: [{'alpha': 0.8}] # 控制域内数据分布的参数
+  splits: [0.6, 0, 0.4]
+  clients_per_domain: [10, 10, 10, 10]
+
+
+dataloader:
+  batch_size: 16
+model:
+  type: pacs_resnet10
+  in_channels: 3
+  out_channels: 7
+  
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.01
+    weight_decay: 1e-4
+
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: cvtrainer
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
+  split: ['test']

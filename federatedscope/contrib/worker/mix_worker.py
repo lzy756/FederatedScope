@@ -1,14 +1,13 @@
 import logging
 import copy
 import numpy as np
-import torch
 import random
-import os
-import json
 import math
 from pulp import *  # For linear programming solver
-import pickle
-from federatedscope.core.auxiliaries.sampler_builder import get_sampler
+from federatedscope.core.auxiliaries.utils import (
+    merge_dict_of_results,
+    calculate_time_cost,
+)
 
 try:
     import gurobipy as gp
@@ -22,7 +21,6 @@ except ImportError:
 from federatedscope.core.message import Message
 from federatedscope.core.workers.server import Server
 from federatedscope.core.workers.client import Client
-from federatedscope.core.auxiliaries.utils import merge_dict_of_results
 from federatedscope.register import register_worker
 from federatedscope.contrib.data.utils import load_cluster_results
 
@@ -99,12 +97,6 @@ class MIXServer(Server):
         self.M_vector = None  # Target vector M
         self.B_vector = None  # Upper bounds for each cluster
         self.template_solved = False  # Flag to indicate if template is solved
-
-        self.out_type = MODEL_PARA_TYPE  # 发送给客户段的参数类型
-        self.in_type = MODEL_PARA_TYPE  # 需要客户端发送的参数类型
-
-        self.intra_round = config.aggregator.get("intra_round", 1)  # 簇内的训练轮数
-        self.inter_round = config.aggregator.get("inter_round", 2)  # 簇间的训练轮数
 
         self._load_and_process_communities()
 
@@ -203,21 +195,18 @@ class MIXServer(Server):
         return super().callback_funcs_for_join_in(message)
 
     def broadcast_model_para(
-        self,
-        out_type,
-        in_type,
-        msg_type="model_para",
-        sample_client_num=-1,
-        filter_unseen_clients=False,
+        self, msg_type="model_para", sample_client_num=-1, filter_unseen_clients=True
     ):
-        """Broadcast model parameters to clients"""
-        # If it's an evaluation request, send directly to all clients
-        logger.info(
-            f"Server: Broadcasting model parameters for round {self.state}, {out_type} -> {in_type}"
-        )
+        """覆写广播模型参数方法"""
+        # if self.state >= self._cfg.federate.total_round_num:
+        #     self.terminate(msg_type="finish")
+        #     return
+
+        # 如果是评估请求，直接发送给所有客户端
         if msg_type == "evaluate":
             receiver = list(self.comm_manager.neighbors.keys())
             for rcv_idx in receiver:
+                # 如果有个性化切片，使用客户端的个性化模型进行评估
                 content = None
                 if rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]
@@ -227,157 +216,79 @@ class MIXServer(Server):
                         sender=self.ID,
                         receiver=[rcv_idx],
                         state=self.state,
-                        content=(out_type, in_type, content),
+                        content=content,
                     )
                 )
             return
+
+        # 处理两种情况：
+        # 1. 向上一轮参与的客户端发送更新后的个性化切片
+        # 2. 采样新客户端启动新一轮训练
 
         # 首先，如果存在个性化切片且有上一轮的客户端，先发送结果给上一轮的客户端
-        for cid in self.prev_sample_client_ids:
-            if cid in self.personalized_slices:
-                content = self.personalized_slices[cid]
-                self.comm_manager.send(
-                    Message(
-                        msg_type="update_model",
-                        sender=self.ID,
-                        receiver=[cid],
-                        state=self.state,
-                        content=(out_type, in_type, content),
+        if self.prev_sample_client_ids:
+            for cid in self.prev_sample_client_ids:
+                if cid in self.personalized_slices:
+                    logger.debug(f"Send personalized slice to C{cid}")
+                    # 使用新消息类型update_model，只更新模型不触发训练
+                    self.comm_manager.send(
+                        Message(
+                            msg_type="update_model",
+                            sender=self.ID,
+                            receiver=[cid],
+                            state=self.state,
+                            content=self.personalized_slices[cid],
+                        )
                     )
-                )
 
-        self.prev_sample_client_ids = []
+            # 清空上一轮客户端列表(已经发送完成)
+            self.prev_sample_client_ids = []
 
-        # 确保所有客户端状态正确设置为"空闲"
-        all_client_ids = list(self.comm_manager.neighbors.keys())
-        self.sampler.change_state(all_client_ids, "idle")
-
-        # 然后，采样新的客户端进行下一轮训练
-        if filter_unseen_clients:
-            # 适配父类方法的用法
-            self.sampler.change_state(self.unseen_clients_id, "unseen")
-
-        # Select clients from each cluster using pre-solved template
-        self.selected_clients_per_cluster = self._select_clients_from_clusters(
-            self.state
-        )
-        if not any(self.selected_clients_per_cluster.values()):
-            logger.warning(
-                f"Failed to select clients for round {self.state}, skipping this round"
+        # 获取需要广播的客户端
+        if self.S > 0:
+            self.selected_clients_per_cluster = self._select_clients_from_clusters(
+                self.state
             )
-            self.state += 1
-            if self.state < self._cfg.federate.total_round_num:
-                self.broadcast_model_para(
-                    msg_type="model_para", out_type=out_type, in_type=in_type
-                )
-            return
+            receiver = []
+            for _, client_list in self.selected_clients_per_cluster.items():
+                receiver.extend(client_list)
+            # 保存当前轮次选择的客户端ID
+            self.sample_client_ids = receiver
+        else:
+            # 广播给所有客户端
+            receiver = list(self.comm_manager.neighbors.keys())
+            if msg_type == "model_para":
+                self.sample_client_ids = receiver
 
-        sampled_clients = []
-        for _, cluster_clients in self.selected_clients_per_cluster.items():
-            if cluster_clients:
-                sampled_clients.extend(cluster_clients)
-
-        self.sampler.change_state(sampled_clients, "working")
-        self.sample_client_ids = sampled_clients
-
-        for client_id in sampled_clients:
-            if self.state == 0:
-                # 第一次训练或者没有个性化切片，则发送自身的模型
+        # 广播开始训练的消息 - 不需要发送模型参数，客户端将使用自己当前的模型
+        for rcv_idx in receiver:
+            # 对于首轮训练或没有个性化切片的情况，需要发送初始模型
+            if self.state == 0 or not hasattr(self, "personalized_slices"):
                 content = self.model.state_dict()
                 self.comm_manager.send(
                     Message(
                         msg_type="model_para",
                         sender=self.ID,
-                        receiver=[client_id],
+                        receiver=[rcv_idx],
                         state=self.state,
-                        content=(MODEL_PARA_TYPE, in_type, content),
+                        content=content,
                     )
                 )
             else:
+                # 如果客户端有个性化切片，使用trigger_train消息类型触发训练
+                # 如果没有个性化切片(新加入的客户端)，发送空内容，客户端会使用现有模型
                 content = None
-                if client_id in self.personalized_slices:
-                    content = self.personalized_slices[client_id]
+                if rcv_idx in self.personalized_slices:
+                    content = self.personalized_slices[rcv_idx]
                 self.comm_manager.send(
                     Message(
                         msg_type="trigger_train",
                         sender=self.ID,
-                        receiver=[client_id],
+                        receiver=[rcv_idx],
                         state=self.state,
-                        content=(out_type, in_type, content),
+                        content=content,
                     )
                 )
-
-        logger.info("Server: Finished model broadcasting")
-
-    def trigger_for_start(self):
-        """
-        To start the FL course when the expected number of clients have joined
-        """
-
-        if self.check_client_join_in():
-            if self._cfg.federate.use_ss or self._cfg.vertical.use:
-                self.broadcast_client_address()
-
-            # get sampler
-            if "client_resource" in self._cfg.federate.join_in_info:
-                client_resource = [
-                    self.join_in_info[client_index]["client_resource"]
-                    for client_index in np.arange(1, self.client_num + 1)
-                ]
-            else:
-                if self._cfg.backend == "torch":
-                    model_size = (
-                        sys.getsizeof(pickle.dumps(self.models[0])) / 1024.0 * 8.0
-                    )
-                else:
-                    # TODO: calculate model size for TF Model
-                    model_size = 1.0
-                    logger.warning(
-                        f"The calculation of model size in backend:"
-                        f"{self._cfg.backend} is not provided."
-                    )
-
-                client_resource = (
-                    [
-                        model_size / float(x["communication"])
-                        + float(x["computation"]) / 1000.0
-                        for x in self.client_resource_info
-                    ]
-                    if self.client_resource_info is not None
-                    else None
-                )
-
-            if self.sampler is None:
-                self.sampler = get_sampler(
-                    sample_strategy=self._cfg.federate.sampler,
-                    client_num=self.client_num,
-                    client_info=client_resource,
-                )
-
-            # change the deadline if the asyn.aggregator is `time up`
-            if self._cfg.asyn.use and self._cfg.asyn.aggregator == "time_up":
-                self.deadline_for_cur_round = (
-                    self.cur_timestamp + self._cfg.asyn.time_budget
-                )
-
-            # start feature engineering
-            self.trigger_for_feat_engr(
-                self.broadcast_model_para,
-                {
-                    "msg_type": "model_para",
-                    "sample_client_num": self.sample_client_num,
-                    "out_type": MODEL_PARA_TYPE,
-                    "in_type": (
-                        MODEL_UPDATE_TYPE if self.intra_round != 0 else MODEL_PARA_TYPE
-                    ),
-                },
-            )
-
-            logger.info(
-                "----------- Starting training (Round #{:d}) -------------".format(
-                    self.state
-                )
-            )
 
     def callback_funcs_for_model_para(self, message: Message):
         """Handle model parameters from clients"""
@@ -389,125 +300,47 @@ class MIXServer(Server):
 
         # Save client uploaded model
         self.msg_buffer["train"][round][sender] = content
-        logger.info(
-            f"Server: Received model parameters from client {sender} for round {round}"
-        )
-
-        # Check if received all responses from all selected clients
-        if not hasattr(self, "selected_clients_per_cluster"):
-            logger.warning("No selected clients found, skipping aggregation")
-            return True
+        # logger.info(
+        #     f"Server: Received model parameters from client {sender} for round {round}"
+        # )
 
         # Count expected and received responses from all selected clients
-        expected_total = 0
-        received_total = 0
-        for cluster_clients in self.selected_clients_per_cluster.values():
-            for client_id in cluster_clients:
-                expected_total += 1
-                if client_id in self.msg_buffer["train"][round]:
-                    received_total += 1
-
-        if received_total < expected_total:
-            # Still waiting for responses
+        if len(self.msg_buffer["train"][round]) < len(self.sample_client_ids):
             return False
 
-        # All responses received, start two-layer aggregation
+        client_feedback = []
+        for cid in self.sample_client_ids:
+            client_info = {
+                "client_id": cid,
+                "model_para": self.msg_buffer["train"][round][cid][1],
+            }
+            # logger.info(
+            #     f"model_para from client {cid}: {type(client_info['model_para'])}"
+            # )
+            client_feedback.append(client_info)
 
-        # get the in_type from the first message
-        _, self.in_type, _ = content
-        logger.info(
-            f"Server: Received all responses for round {round}, in_type={self.in_type}"
-        )
-        # model_update: Intra-cluster aggregation using Consensus Maximization
-        if self.in_type == MODEL_UPDATE_TYPE:
-            cluster_models = {}
-            for (
-                cluster_idx,
-                cluster_clients,
-            ) in self.selected_clients_per_cluster.items():
-                if not cluster_clients:  # Skip empty clusters
-                    continue
+        # 使用聚合器进行聚合
+        agg_info = {"client_feedback": client_feedback}
+        # logger.info(f"aggregator: {self.aggregator.__class__.__name__}")
+        result = self.aggregator.aggregate(agg_info)
 
-                # Prepare model parameters for intra-cluster clients
-                cluster_feedback = []
-                for client_id in cluster_clients:
-                    if client_id in self.msg_buffer["train"][round]:
-                        content = self.msg_buffer["train"][round][client_id]
-                        assert (
-                            isinstance(content, tuple) and len(content) == 3
-                        ), f"Expected content to be a tuple of length 3, got {len(content)}"
-                        sample_size, _, model_para = content
-                        # 聚合器内部已有安全的tensor处理，无需额外克隆
-                        client_info = {
-                            "client_id": client_id,
-                            "sample_size": sample_size,
-                            "model_para": model_para,
-                        }
-                        cluster_feedback.append(client_info)
-
-                if cluster_feedback:
-                    logger.info(
-                        f"Server: Performing intra-cluster Consensus Maximization aggregation for Cluster {cluster_idx} with {len(cluster_feedback)} clients"
-                    )
-                    # Use Consensus Maximization for intra-cluster aggregation
-                    result = self.aggregator.aggregate_intra_group(cluster_feedback)
-                    # 聚合器返回的已经是安全的独立副本，无需再次克隆
-                    cluster_models[cluster_idx] = {
-                        "model": result,
-                        "size": sum(
-                            client["sample_size"] for client in cluster_feedback
-                        ),
-                    }
-
-            self.personalized_slices = {}  # Reset personalized slices for this round
-            for i, pc in enumerate(self.peer_communities):
-                if not pc:  # Skip empty peer communities
-                    continue
-                if i in cluster_models:
-                    for client_id in pc:
-                        self.personalized_slices[client_id] = copy.deepcopy(
-                            cluster_models[i]["model"]
-                        )
-            logger.info(
-                f"Server: Intra-cluster aggregation completed, {len(self.personalized_slices)} personalized slices created"
-            )
-
-            self.prev_sample_client_ids = list(self.comm_manager.neighbors.keys())
-
-        # model_para: Inter-cluster aggregation using trace-norm regularization
-        if self.in_type == MODEL_PARA_TYPE:
-            client_feedback = []
-            for cid in self.sample_client_ids:
-                content = self.msg_buffer["train"][round][cid]
-                assert (
-                    isinstance(content, tuple) and len(content) == 3
-                ), f"Expected content to be a tuple of length 3, got {len(content)}"
-                sample_size, in_type, model_para = content
-                assert (
-                    in_type == self.in_type
-                ), f"Expected in_type to be {self.in_type}, got {in_type}"
-                # 聚合器内部已有安全的tensor处理，无需额外克隆
-                client_info = {
-                    "client_id": cid,
-                    "model_para": model_para,
-                    "sample_size": sample_size,
-                }
-                client_feedback.append(client_info)
-            logger.info(
-                f"Server: Performing inter-cluster aggregation with {len(client_feedback)} clusters"
-            )
-            # Use FedSAK aggregation method for inter-cluster aggregation
-            result = self.aggregator.aggregate_inter_group(client_feedback)
+        # 保存聚合结果作为个性化切片，下一轮使用
+        if "model_para_all" in result:
             self.personalized_slices = result["model_para_all"]
+            # logger.info(
+            #     f"Server: Aggregated personalized slices for round {round}, "
+            #     f"sampled clients: {self.sample_client_ids}"
+            #     f", {self.personalized_slices.keys()} keys"
+            #     f", {type(list(self.personalized_slices.values())[0])} values"
+            # )
 
-            # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
-            self.prev_sample_client_ids = self.sample_client_ids.copy()
+        # 保存当前客户端列表为上一轮客户端列表，以便下次发送结果
+        self.prev_sample_client_ids = self.sample_client_ids.copy()
 
         # 清理缓存
         self.msg_buffer["train"][round].clear()
         self.state += 1
 
-        self.out_type = self.in_type
         # 检查是否需要执行评估
         if (
             self.state % self._cfg.eval.freq == 0
@@ -518,92 +351,21 @@ class MIXServer(Server):
 
         # 检查是否继续训练
         if self.state < self._cfg.federate.total_round_num:
+            # 启动新一轮训练
             logger.info(
-                "----------- Starting training "
-                + f"(Round #{self.state}) -------------"
+                "----------- Starting a new training round"
+                + f" (Round #{self.state}) -------------"
             )
-            # 这里更新in_type和out_type
-
-            total_cycle = self.inter_round + self.intra_round
-            r = self.state % total_cycle
-
-            if r < self.intra_round:
-                # 组内训练
-                self.in_type = MODEL_UPDATE_TYPE
-                logger.info(
-                    f"Server: Intra-cluster training for round {self.state}, cycle {r + 1}/{self.intra_round}"
-                )
-            else:
-                # 组间训练
-                self.in_type = MODEL_PARA_TYPE
-                inter_cycle = r - self.intra_round + 1
-                logger.info(
-                    f"Server: Inter-cluster training for round {self.state}, cycle {inter_cycle}/{self.inter_round}"
-                )
-
             self.broadcast_model_para(
                 msg_type="model_para",
-                out_type=self.out_type,
-                in_type=self.in_type,
+                sample_client_num=self._cfg.federate.sample_client_num,
             )
         else:
-            logger.info("Server: Training is finished! Starting final evaluation.")
+            # 最终评估
+            logger.info("Server: Training is finished! Starting evaluation.")
             self.eval()
 
         return True
-
-    def eval(self):
-        """Perform evaluation on server side
-
-        When cfg.federate.make_global_eval=True, server will perform global evaluation.
-        Otherwise, evaluation task will be distributed to clients to execute.
-        """
-        if self._cfg.federate.make_global_eval:
-            # Default, evaluate each internal model one by one
-            for i in range(self.model_num):
-                trainer = self.trainers[i]
-                # Execute evaluation on server side
-                metrics = {}
-                for split in self._cfg.eval.split:
-                    eval_metrics = trainer.evaluate(target_data_split_name=split)
-                    metrics.update(**eval_metrics)
-
-                # Format evaluation results
-                formatted_eval_res = self._monitor.format_eval_res(
-                    metrics,
-                    rnd=self.state,
-                    role="Server #",
-                    forms=self._cfg.eval.report,
-                    return_raw=self._cfg.federate.make_global_eval,
-                )
-
-                # Update best results
-                self._monitor.update_best_result(
-                    self.best_results,
-                    formatted_eval_res["Results_raw"],
-                    results_type="server_global_eval",
-                )
-
-                # Merge historical results
-                self.history_results = merge_dict_of_results(
-                    self.history_results, formatted_eval_res
-                )
-
-                # Save formatted results
-                self._monitor.save_formatted_results(formatted_eval_res)
-                logger.info(formatted_eval_res)
-
-            # Check and save model
-            self.check_and_save()
-        else:
-            # Execute evaluation on clients
-            logger.info("Server: Broadcasting model for client evaluation")
-            self.broadcast_model_para(
-                msg_type="evaluate",
-                filter_unseen_clients=False,
-                in_type=self.in_type,
-                out_type=self.out_type,
-            )
 
     def _calculate_features(self):
         """Calculate feature matrix P and target distribution"""
@@ -1125,8 +887,6 @@ class MIXServer(Server):
 
 
 class MIXClient(Client):
-    """MIX client implementation"""
-
     def __init__(
         self,
         ID=-1,
@@ -1141,6 +901,7 @@ class MIXClient(Client):
         *args,
         **kwargs,
     ):
+        """修改构造函数以匹配Client父类的参数列表"""
         super().__init__(
             ID,
             server_id,
@@ -1154,7 +915,6 @@ class MIXClient(Client):
             *args,
             **kwargs,
         )
-        self.base_model = copy.deepcopy(self.trainer.get_model_para())
 
     def _register_default_handlers(self):
         """覆写默认消息处理函数注册"""
@@ -1182,114 +942,20 @@ class MIXClient(Client):
         )
 
     def callback_funcs_for_model_para(self, message: Message):
-        """Handle model parameters update message"""
-
-        round, sender, content = (
-            message.state,
-            message.sender,
-            message.content,
-        )
-        in_type, out_type, param = content
-        logger.info(
-            f"Client #{self.ID}: Received model parameters from server for round {round}, {in_type} -> {out_type}"
-        )
-        if param is not None and in_type == MODEL_UPDATE_TYPE:
-            new_param = {}
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    new_param[param_name] = param_base.data + param[param_name].data
-            self.trainer.update(new_param)
-
-        elif param is not None and in_type == MODEL_PARA_TYPE:
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    param_base.data.copy_(param[param_name].data)
-            self.trainer.update(self.base_model)
-
-        self.state = round
-
-        sample_size, _, results = self.trainer.train()
-
-        formatted_results = self._monitor.format_eval_res(
-            results, rnd=self.state, role="Client #{}".format(self.ID), return_raw=True
-        )
-        logger.info(formatted_results)
-        model_para = self.trainer.get_model_para()
-        if out_type == MODEL_UPDATE_TYPE:
-            model_update = dict()
-            for param_name, param_base in self.base_model.items():
-                if param_name in model_para:
-                    model_update[param_name] = (
-                        (model_para[param_name].data - param_base.data).detach().clone()
-                    )
-            # Send model update to server
-            self.comm_manager.send(
-                Message(
-                    msg_type="model_para",
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, MODEL_UPDATE_TYPE, model_update),
-                )
-            )
-        else:
-            model_para_copy = copy.deepcopy(model_para)
-            self.comm_manager.send(
-                Message(
-                    msg_type="model_para",
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
-                )
-            )
-
-    def callback_funcs_for_update_model(self, message: Message):
-        """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""
-        round, sender, payload = message.state, message.sender, message.content
-        in_type, _, param = payload
-        logger.info(
-            f"Client #{self.ID}: Received model update for round {round}, {in_type} -> None"
-        )
-        # 如果是模型更新，则直接更新模型参数
-        if in_type == MODEL_UPDATE_TYPE:
-            new_param = {}
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    new_param[param_name] = param_base.data + param[param_name].data
-            self.trainer.update(new_param)
-        else:
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    param_base.data.copy_(param[param_name].data)
-            self.trainer.update(self.base_model)
-        self.state = round
-
-    def callback_funcs_for_trigger_train(self, message: Message):
-        """处理来自服务器的训练触发消息"""
+        """处理来自服务器的个性化模型切片"""
         round, sender, payload = message.state, message.sender, message.content
 
-        in_type, out_type, param = payload
-        logger.info(
-            f"Client #{self.ID}: Triggering training for round {round}, {in_type} -> {out_type}"
-        )
-        # 如果是模型更新，则直接更新模型参数
-        if param is not None and in_type == MODEL_UPDATE_TYPE:
-            new_param = {}
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    new_param[param_name] = param_base.data + param[param_name].data
-            self.trainer.update(new_param)
+        # 1) 只更新共享层
+        cur = self.model.state_dict()
+        cur.update(payload)
+        self.model.load_state_dict(cur, strict=False)
 
-        elif param is not None and in_type == MODEL_PARA_TYPE:
-            for param_name, param_base in self.base_model.items():
-                if param_name in param:
-                    param_base.data.copy_(param[param_name].data)
-            self.trainer.update(self.base_model)
-
+        # 更新轮次状态
         self.state = round
 
+        # 2) 本地训练 - 使用标准接口，让自定义trainer处理共享参数
         sample_size, _, results = self.trainer.train()
+
         # 记录训练结果到日志
         logger.info(
             self._monitor.format_eval_res(
@@ -1300,36 +966,74 @@ class MIXClient(Client):
             )
         )
 
-        model_para = self.trainer.get_model_para()
+        # 3) 获取模型参数 - 自定义trainer的_param_filter会自动筛选共享层
+        model_para = copy.deepcopy(self.trainer.get_model_para())
 
-        if out_type == MODEL_UPDATE_TYPE:
-            model_update = dict()
-            for param_name, param_base in self.base_model.items():
-                if param_name in model_para:
-                    model_update[param_name] = (
-                        (model_para[param_name].data - param_base.data).detach().clone()
-                    )
-            # Send model update to server
-            self.comm_manager.send(
-                Message(
-                    msg_type="model_para",
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, MODEL_UPDATE_TYPE, model_update),
-                )
+        # 4) 发送给服务器 - 使用标准通信接口
+        self.comm_manager.send(
+            Message(
+                msg_type="model_para",
+                sender=self.ID,
+                receiver=[sender],
+                state=self.state,
+                content=(sample_size, model_para),
             )
-        else:
-            model_para_copy = copy.deepcopy(model_para)
-            self.comm_manager.send(
-                Message(
-                    msg_type="model_para",
-                    sender=self.ID,
-                    receiver=[sender],
-                    state=self.state,
-                    content=(sample_size, MODEL_PARA_TYPE, model_para_copy),
-                )
+        )
+
+    def callback_funcs_for_update_model(self, message: Message):
+        """处理来自服务器的模型更新消息（只更新模型，不触发训练）"""
+        round, sender, payload = message.state, message.sender, message.content
+
+        if payload is not None:
+            # 更新共享层
+            cur = self.model.state_dict()
+            cur.update(payload)
+            self.model.load_state_dict(cur, strict=False)
+
+        # 更新轮次状态
+        self.state = round
+
+        # 不触发训练
+        logger.debug(f"Client #{self.ID}: Model updated without training")
+
+    def callback_funcs_for_trigger_train(self, message: Message):
+        """处理来自服务器的训练触发消息"""
+        round, sender, payload = message.state, message.sender, message.content
+
+        # 如果服务器发送了模型参数，则更新模型
+        if payload is not None:
+            cur = self.model.state_dict()
+            cur.update(payload)
+            self.model.load_state_dict(cur, strict=False)
+
+        # 更新轮次状态
+        self.state = round
+
+        # 执行本地训练
+        sample_size, _, results = self.trainer.train()
+
+        # 记录训练结果到日志
+        logger.info(
+            self._monitor.format_eval_res(
+                results,
+                rnd=self.state,
+                role="Client #{}".format(self.ID),
+                return_raw=True,
             )
+        )
+
+        # 获取模型参数并发送
+        model_para = copy.deepcopy(self.trainer.get_model_para())
+
+        self.comm_manager.send(
+            Message(
+                msg_type="model_para",
+                sender=self.ID,
+                receiver=[sender],
+                state=self.state,
+                content=(sample_size, model_para),
+            )
+        )
 
     def callback_funcs_for_evaluate(self, message: Message):
         """
@@ -1341,28 +1045,9 @@ class MIXClient(Client):
         sender, timestamp = message.sender, message.timestamp
         self.state = message.state
         if message.content is not None:
-            # If the content is not None, it means the model parameters are updated
-            in_type, out_type, param = message.content
-            logger.info(
-                f"Client #{self.ID}: Received model parameters for evaluation at round {self.state}, {in_type} -> {out_type}"
+            self.trainer.update(
+                message.content, strict=self._cfg.federate.share_local_model
             )
-            if param is not None and in_type == MODEL_UPDATE_TYPE:
-                new_param = {}
-                for param_name, param_base in self.base_model.items():
-                    if param_name in param:
-                        new_param[param_name] = param_base.data + param[param_name].data
-                self.trainer.update(new_param)
-            elif param is not None and in_type == MODEL_PARA_TYPE:
-                # 直接更新模型参数
-                for param_name, param_base in self.base_model.items():
-                    if param_name in param:
-                        param_base.data.copy_(param[param_name].data)
-                self.trainer.update(self.base_model)
-            else:
-                logger.info(
-                    f"Client #{self.ID}: No model parameters received for evaluation at round {self.state}"
-                )
-
         if self.early_stopper.early_stopped and self._cfg.federate.method in [
             "local",
             "global",
@@ -1395,6 +1080,9 @@ class MIXClient(Client):
                 forms=["raw"],
                 return_raw=True,
             )
+
+            logger.info(formatted_eval_res)
+
             self._monitor.update_best_result(
                 self.best_results,
                 formatted_eval_res["Results_raw"],
@@ -1419,12 +1107,12 @@ class MIXClient(Client):
         )
 
 
-# Register worker according to framework requirements
-def call_fedgs_worker(worker_type):
+# 按照框架要求注册worker
+def call_mix_worker(worker_type):
     if worker_type == "mix":
         worker_builder = {"client": MIXClient, "server": MIXServer}
         return worker_builder
     return None
 
 
-register_worker("mix", call_fedgs_worker)
+register_worker("mix", call_mix_worker)

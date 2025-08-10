@@ -4,6 +4,10 @@ import numpy as np
 def _split_according_to_prior(label, client_num, prior):
     assert client_num == len(prior)
     classes = len(np.unique(label))
+    print(
+        f"Splitting {classes} classes into {client_num} clients based on prior distribution"
+    )
+    print(len(np.unique(np.concatenate(prior, 0))))
     assert classes == len(np.unique(np.concatenate(prior, 0)))
 
     # counting
@@ -17,17 +21,15 @@ def _split_according_to_prior(label, client_num, prior):
     for k in range(classes):
         idx_k = np.where(label == k)[0]
         np.random.shuffle(idx_k)
-        nums_k = np.ceil(frequency[:, k] / sum_frequency[k] *
-                         len(idx_k)).astype(int)
+        nums_k = np.ceil(frequency[:, k] / sum_frequency[k] * len(idx_k)).astype(int)
         while len(idx_k) < np.sum(nums_k):
             random_client = np.random.choice(range(client_num))
             if nums_k[random_client] > 0:
                 nums_k[random_client] -= 1
         assert len(idx_k) == np.sum(nums_k)
         idx_slice = [
-            idx_j + idx.tolist() for idx_j, idx in zip(
-                idx_slice, np.split(idx_k,
-                                    np.cumsum(nums_k)[:-1]))
+            idx_j + idx.tolist()
+            for idx_j, idx in zip(idx_slice, np.split(idx_k, np.cumsum(nums_k)[:-1]))
         ]
 
     for i in range(len(idx_slice)):
@@ -35,11 +37,9 @@ def _split_according_to_prior(label, client_num, prior):
     return idx_slice
 
 
-def dirichlet_distribution_noniid_slice(label,
-                                        client_num,
-                                        alpha,
-                                        min_size=1,
-                                        prior=None):
+def dirichlet_distribution_noniid_slice(
+    label, client_num, alpha, min_size=1, prior=None
+):
     r"""Get sample index list for each client from the Dirichlet distribution.
     https://github.com/FedML-AI/FedML/blob/master/fedml_core/non_iid
     partition/noniid_partition.py
@@ -53,16 +53,16 @@ def dirichlet_distribution_noniid_slice(label,
         idx_slice (List): List of splited label index slice.
     """
     if len(label.shape) != 1:
-        raise ValueError('Only support single-label tasks!')
+        raise ValueError("Only support single-label tasks!")
 
     if prior is not None:
         return _split_according_to_prior(label, client_num, prior)
 
     num = len(label)
     classes = len(np.unique(label))
-    assert num > client_num * min_size, f'The number of sample should be ' \
-                                        f'greater than' \
-                                        f' {client_num * min_size}.'
+    assert num > client_num * min_size, (
+        f"The number of sample should be " f"greater than" f" {client_num * min_size}."
+    )
     size = 0
     while size < min_size:
         idx_slice = [[] for _ in range(client_num)]

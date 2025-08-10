@@ -133,20 +133,40 @@ def adaptive_cluster_clients(
             f"迭代#{i+1}: 尝试阈值 {mid_jsd:.4f} (范围 [{low:.4f}, {high:.4f}])"
         )
 
+        # 防止单个客户端成簇，设置最小簇大小为2
+        min_cluster_size = max(2, target_avg_size // 2)
         clustering = DBSCAN(
-            eps=mid_jsd, min_samples=1, metric="precomputed"  # 单个样本可成簇
+            eps=mid_jsd, min_samples=min_cluster_size, metric="precomputed"
         )
         cluster_labels = clustering.fit_predict(jsd_matrix)
-        num_clusters = len(np.unique(cluster_labels))
 
-        # 计算实际平均簇大小
-        cluster_sizes = [
-            np.sum(cluster_labels == label) for label in np.unique(cluster_labels)
-        ]
-        avg_cluster_size = np.mean(cluster_sizes) if num_clusters > 0 else 0
+        # 处理噪声点（标记为-1的点），将它们分配到最近的簇
+        noise_points = np.where(cluster_labels == -1)[0]
+        if len(noise_points) > 0:
+            for noise_idx in noise_points:
+                # 找到与噪声点最相似的非噪声点
+                distances = jsd_matrix[noise_idx]
+                valid_indices = np.where(cluster_labels != -1)[0]
+                if len(valid_indices) > 0:
+                    closest_idx = valid_indices[np.argmin(distances[valid_indices])]
+                    cluster_labels[noise_idx] = cluster_labels[closest_idx]
+
+        num_clusters = len(np.unique(cluster_labels[cluster_labels != -1]))
+
+        # 计算实际平均簇大小（排除噪声点）
+        valid_labels = cluster_labels[cluster_labels != -1]
+        if len(valid_labels) > 0:
+            cluster_sizes = [
+                np.sum(cluster_labels == label) for label in np.unique(valid_labels)
+            ]
+            avg_cluster_size = np.mean(cluster_sizes)
+        else:
+            avg_cluster_size = 0
 
         # 记录最佳结果
-        if best_clusters is None or abs(avg_cluster_size - target_avg_size) < tolerance:
+        if best_clusters is None or (
+            num_clusters > 0 and abs(avg_cluster_size - target_avg_size) < tolerance
+        ):
             best_jsd_threshold = mid_jsd
             best_clusters = cluster_labels
             best_size = avg_cluster_size
@@ -180,11 +200,43 @@ def adaptive_cluster_clients(
             f"达到最大迭代次数 {max_iter}，使用最佳结果: 阈值 {best_jsd_threshold:.4f}"
         )
 
-    # 构建社区结构
+    # 构建社区结构，排除噪声点
     peer_communities = []
-    for label in np.unique(best_clusters):
+    valid_labels = np.unique(best_clusters[best_clusters != -1])
+    for label in valid_labels:
         community = np.where(best_clusters == label)[0]
-        peer_communities.append(community.tolist())
+        # 确保每个社区至少有2个成员
+        if len(community) >= 2:
+            peer_communities.append(community.tolist())
+        else:
+            logger.warning(f"发现单客户端簇 {label}，将被合并到其他簇中")
+
+    # 如果存在单客户端簇，将它们合并到最相似的簇中
+    single_clients = []
+    for label in valid_labels:
+        community = np.where(best_clusters == label)[0]
+        if len(community) == 1:
+            single_clients.extend(community)
+
+    # 处理单客户端，将它们分配到最相似的簇
+    for client_idx in single_clients:
+        if len(peer_communities) > 0:
+            # 找到与该客户端最相似的簇
+            min_dist = float("inf")
+            best_community_idx = 0
+
+            for comm_idx, community in enumerate(peer_communities):
+                # 计算客户端与簇中所有成员的平均距离
+                distances = [jsd_matrix[client_idx, member] for member in community]
+                avg_dist = np.mean(distances)
+                if avg_dist < min_dist:
+                    min_dist = avg_dist
+                    best_community_idx = comm_idx
+
+            peer_communities[best_community_idx].append(client_idx)
+        else:
+            # 如果没有有效簇，创建一个新簇
+            peer_communities.append([client_idx])
 
     # 记录最终簇大小分布
     cluster_sizes = [len(c) for c in peer_communities]
@@ -284,7 +336,7 @@ def sample_data(dataset, samples=2000):
     return Subset(dataset, sampled_indices)
 
 
-def get_label_distribution(subsets: list, num_classes=10):
+def get_label_distribution(subsets: list, num_classes: int):
     """
     计算每个子集的标签分布
     :param subsets: list of Subset objects

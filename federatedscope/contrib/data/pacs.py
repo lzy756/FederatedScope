@@ -1,12 +1,8 @@
 import os
 import logging
-import json
 import numpy as np
 from torchvision import transforms
-from torchvision.datasets import ImageFolder, DatasetFolder
-from sklearn.cluster import DBSCAN
-from scipy.stats import entropy
-from federatedscope.core.auxiliaries.splitter_builder import get_splitter
+from torchvision.datasets import ImageFolder
 from federatedscope.core.data import BaseDataTranslator
 from federatedscope.register import register_data
 from federatedscope.core.data import ClientData, StandaloneDataDict
@@ -15,22 +11,21 @@ from federatedscope.contrib.data.utils import (
     adaptive_cluster_clients,
     save_cluster_results,
 )
-from torch.utils.data import ConcatDataset, Subset
-import numpy as np
+from torch.utils.data import ConcatDataset, Subset, Dataset
 
 logger = logging.getLogger(__name__)
 
 
-class ImageFolder_Custom(DatasetFolder):
+class PacsFullImages:
     """
-    Custom ImageFolder implementation based on RethinkFL's officecaltech.py
-    Loads all data without splitting into train/test subsets.
+    Helper class to load all images from a specific domain for PACS dataset
     """
 
-    def __init__(self, domain_name, root, transform=None):
+    def __init__(self, domain_name, root):
         self.domain_name = domain_name
         self.root = root
-        self.transform = transform
+
+        logger.info(f"Loading all data for domain '{domain_name}'")
 
         # Build the path to the PACS dataset
         dataset_path = os.path.join(self.root, "PACS", self.domain_name)
@@ -38,17 +33,59 @@ class ImageFolder_Custom(DatasetFolder):
             # Fallback to direct domain name path
             dataset_path = os.path.join(self.root, self.domain_name)
 
-        self.imagefolder_obj = ImageFolder(dataset_path, self.transform)
-        self.all_data = self.imagefolder_obj.samples
+        # Use ImageFolder to get all samples
+        imagefolder_obj = ImageFolder(dataset_path, transform=None)
+        self.all_data = imagefolder_obj.samples
+
+        # Store class information
+        self.classes = imagefolder_obj.classes  # List of class names
+        self.class_to_idx = (
+            imagefolder_obj.class_to_idx
+        )  # Dict mapping class names to indices
+        self.num_classes = len(self.classes)  # Number of classes
+
+        logger.info(
+            f"Loaded {len(self.all_data)} total samples for domain {domain_name}"
+        )
+        logger.info(f"Classes: {self.classes}")
+
+    def __len__(self):
+        return len(self.all_data)
+
+
+class PacsDataset(Dataset):
+    """
+    Custom PACS dataset implementation for train/test splits
+    """
+
+    def __init__(self, data_list, class_to_idx, classes, num_classes, transform=None):
+        """
+        Initialize PACS dataset with specific data list
+
+        Args:
+            data_list: List of (img_path, label) tuples
+            class_to_idx: Dictionary mapping class names to indices
+            classes: List of class names
+            num_classes: Number of classes
+            transform: Transform to apply to images
+        """
+        self.all_data = data_list
+        self.class_to_idx = class_to_idx
+        self.classes = classes
+        self.num_classes = num_classes
+        self.transform = transform
 
     def __len__(self):
         return len(self.all_data)
 
     def __getitem__(self, index):
-        path = self.all_data[index][0]
-        target = self.all_data[index][1]
+        path, target = self.all_data[index]
         target = int(target)
-        img = self.imagefolder_obj.loader(path)
+
+        # Load image using PIL
+        from PIL import Image
+
+        img = Image.open(path).convert("RGB")
 
         if self.transform is not None:
             img = self.transform(img)
@@ -60,7 +97,7 @@ def _load_domain_dataset(
     domain_name, data_root, train_transform, test_transform, train_ratio=0.4
 ):
     """
-    Load a single domain dataset (caltech, amazon, webcam, or dslr) and split into train/test sets.
+    Load a single domain dataset and split into train/test sets.
 
     Args:
         domain_name: Name of the domain dataset
@@ -73,11 +110,17 @@ def _load_domain_dataset(
         tuple: (train_dataset, test_dataset)
     """
     try:
-        # Load all data
-        dataset = ImageFolder_Custom(domain_name=domain_name, root=data_root)
+        # Load all data first using PacsFullImages
+        full_images = PacsFullImages(domain_name=domain_name, root=data_root)
+
+        logger.info(
+            f"Loading {domain_name} dataset from {data_root}: classes={full_images.classes}, num_classes={full_images.num_classes}, class_to_idx={full_images.class_to_idx}"
+        )
+
+        # Get all data
+        all_data = full_images.all_data
 
         # Randomly shuffle data indices
-        all_data = dataset.all_data
         indices = np.arange(len(all_data))
         np.random.shuffle(indices)
 
@@ -86,11 +129,29 @@ def _load_domain_dataset(
         train_indices = indices[:train_size]
         test_indices = indices[train_size:]
 
-        train_dataset = Subset(dataset, train_indices)
-        train_dataset.dataset.transform = train_transform
+        # Create train data list
+        train_data = [all_data[i] for i in train_indices]
 
-        test_dataset = Subset(dataset, test_indices)
-        test_dataset.dataset.transform = test_transform
+        # Create test data list
+        test_data = [all_data[i] for i in test_indices]
+
+        # Create independent train dataset
+        train_dataset = PacsDataset(
+            data_list=train_data,
+            class_to_idx=full_images.class_to_idx,
+            classes=full_images.classes,
+            num_classes=full_images.num_classes,
+            transform=train_transform,
+        )
+
+        # Create independent test dataset
+        test_dataset = PacsDataset(
+            data_list=test_data,
+            class_to_idx=full_images.class_to_idx,
+            classes=full_images.classes,
+            num_classes=full_images.num_classes,
+            transform=test_transform,
+        )
 
         logger.info(
             f"Loaded {domain_name} dataset: train={len(train_dataset)}, test={len(test_dataset)}"
@@ -121,13 +182,9 @@ def _create_federated_data_dict(
         domain_name: Name of the domain for logging
 
     Returns:
-        dict: Federated data dictionary with 10 clients
+        dict: Federated data dictionary with client_num clients
     """
-    # Create temporary config for this domain (10 clients)
-    tmp_config = config.clone()
-    tmp_config.merge_from_list(["federate.client_num", client_num])
-
-    # Create temporary config for this domain (10 clients)
+    # Create temporary config for this domain (client_num clients)
     tmp_config = config.clone()
     tmp_config.merge_from_list(["federate.client_num", client_num])
 
@@ -189,7 +246,7 @@ def _merge_data_dictionaries(config, data_dicts):
             cnt += 1
 
     logger.info(f"Merged data dictionary created with {len(merged_data_dict)} clients")
-    # 输出每个客户端训练集和测试集的大小
+    # Log the size of training and test sets for each client
     for client_id, client_data in merged_data_dict.items():
         train_size = len(client_data.train_data) if client_data.train_data else 0
         val_size = len(client_data.val_data) if client_data.val_data else 0
@@ -201,7 +258,7 @@ def _merge_data_dictionaries(config, data_dicts):
     return StandaloneDataDict(merged_data_dict, tmp_config_merged)
 
 
-def _perform_clustering_analysis(data_dict, data_root):
+def _perform_clustering_analysis(data_dict, data_root, num_classes):
     """
     Perform clustering analysis on federated data
 
@@ -228,20 +285,20 @@ def _perform_clustering_analysis(data_dict, data_root):
                 test_subsets.append(client_data.test_data)
 
         logger.info(
-            f"收集到 {len(train_subsets)} 个训练子集, {len(test_subsets)} 个测试子集"
+            f"Collected {len(train_subsets)} training subsets, {len(test_subsets)} test subsets"
         )
 
         if train_subsets and test_subsets:
             # Calculate label distributions
-            logger.info("计算客户端标签分布...")
-            train_distributions = get_label_distribution(train_subsets, num_classes=10)
-            test_distributions = get_label_distribution(test_subsets, num_classes=10)
+            logger.info("Calculating client label distributions...")
+            train_distributions = get_label_distribution(train_subsets, num_classes)
+            test_distributions = get_label_distribution(test_subsets, num_classes)
 
             # Perform clustering
-            logger.info("执行客户端聚类...")
+            logger.info("Performing client clustering...")
             peer_communities = adaptive_cluster_clients(train_distributions)
 
-            logger.info(f"聚类结果: {peer_communities}")
+            logger.info(f"Clustering results: {peer_communities}")
 
             # Save clustering results
             cluster_file = os.path.join(data_root, "peer_communities.json")
@@ -250,11 +307,15 @@ def _perform_clustering_analysis(data_dict, data_root):
             )
 
         else:
-            logger.warning("无法获取客户端数据子集，跳过聚类步骤")
+            logger.warning(
+                "Unable to obtain client data subsets, skipping clustering step"
+            )
 
     except Exception as e:
-        logger.error(f"聚类过程中出现错误: {e}")
-        logger.info("继续返回联邦数据，但没有聚类信息")
+        logger.error(f"Error occurred during clustering process: {e}")
+        logger.info(
+            "Continuing to return federated data, but without clustering information"
+        )
 
 
 def load_pacs_dataset(config, client_cfgs=None):
@@ -269,24 +330,27 @@ def load_pacs_dataset(config, client_cfgs=None):
         tuple: (datadict, config) containing federated dataset
     """
     data_root = config.data.root
+    num_classes = config.model.out_channels
 
     # Define data transforms
     transform_train = transforms.Compose(
         [
-            transforms.Resize((256, 256)),  # 先放大到256x256
-            transforms.RandomCrop((224, 224)),  # 随机裁剪至224x224
-            transforms.RandomHorizontalFlip(p=0.5),  # 随机水平翻转
-            transforms.ToTensor(),  # 转为张量
+            transforms.Resize((256, 256)),  # Resize to 256x256 first
+            transforms.RandomCrop((224, 224)),  # Random crop to 224x224
+            transforms.RandomHorizontalFlip(p=0.5),  # Random horizontal flip
+            transforms.ToTensor(),  # Convert to tensor
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-            ),  # 标准化
+            ),  # Normalization
         ]
     )
 
     transform_test = transforms.Compose(
         [
-            transforms.Resize((256, 256)),  # 放大到256x256
-            transforms.CenterCrop((224, 224)),  # 中心裁剪（避免随机因素影响评估）
+            transforms.Resize((256, 256)),  # Resize to 256x256
+            transforms.CenterCrop(
+                (224, 224)
+            ),  # Center crop to avoid random factors affecting evaluation
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
@@ -320,7 +384,7 @@ def load_pacs_dataset(config, client_cfgs=None):
     merged_data_dict = _merge_data_dictionaries(config, data_dicts)
 
     # Perform clustering analysis
-    _perform_clustering_analysis(merged_data_dict, data_root)
+    _perform_clustering_analysis(merged_data_dict, data_root, num_classes)
 
     return merged_data_dict, config
 
