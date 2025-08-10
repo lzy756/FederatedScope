@@ -154,5 +154,8 @@ environment.yml
 formula.md
 papers/NeurIPS-2023-federated-multi-objective-learning-Paper-Conference.pdf
 
+.vscode/
+/projects/
+/papers/
 
 pretrained_models/
