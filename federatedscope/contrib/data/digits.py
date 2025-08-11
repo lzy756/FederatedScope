@@ -467,7 +467,7 @@ def load_digits_data(config, client_cfgs=None):
 
     # 使用分配的客户端数量创建联邦数据集
     # MNIST数据集
-    mnist_split_datasets = (mnist_train, mnist_test, combined_sampled_test)
+    mnist_split_datasets = (mnist_train, mnist_test, mnist_test)
     tmp_config = config.clone()
     tmp_config.merge_from_list(['federate.client_num', client_allocation[0]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
@@ -475,7 +475,7 @@ def load_digits_data(config, client_cfgs=None):
     logger.info(f"Successfully created federated MNIST dataset with {len(mnist_data_dict) - 1} clients")
 
     # USPS数据集
-    usps_split_datasets = (usps_train, usps_test, combined_sampled_test)
+    usps_split_datasets = (usps_train, usps_test, usps_test)
     tmp_config = config.clone()
     tmp_config.merge_from_list(['federate.client_num', client_allocation[1]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
@@ -483,7 +483,7 @@ def load_digits_data(config, client_cfgs=None):
     logger.info(f"Successfully created federated USPS dataset with {len(usps_data_dict) - 1} clients")
 
     # SVHN数据集
-    svhn_split_datasets = (svhn_train, svhn_test, combined_sampled_test)
+    svhn_split_datasets = (svhn_train, svhn_test, svhn_test)
     tmp_config = config.clone()
     tmp_config.merge_from_list(['federate.client_num', client_allocation[2]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)
@@ -491,7 +491,7 @@ def load_digits_data(config, client_cfgs=None):
     logger.info(f"Successfully created federated SVHN dataset with {len(svhn_data_dict) - 1} clients")
     
     # SYN数据集
-    syn_split_datasets = (syn_train, syn_test, combined_sampled_test)
+    syn_split_datasets = (syn_train, syn_test, syn_test)
     tmp_config = config.clone()
     tmp_config.merge_from_list(['federate.client_num', client_allocation[3]])
     translator = BaseDataTranslator(tmp_config, client_cfgs)

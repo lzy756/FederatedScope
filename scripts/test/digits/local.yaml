@@ -12,7 +12,7 @@ federate:
 data:
   root: data/
   type: digits
-  # consistent_label_distribution: False
+  consistent_label_distribution: False
   splitter: lda
   splitter_args: [{'alpha': 0.1}]
 dataloader:
