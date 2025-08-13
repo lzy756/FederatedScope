@@ -1,0 +1,37 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 42
+federate:
+  mode: standalone
+  total_round_num: 100
+  client_num: 20
+  sample_client_num: 20
+  # make_global_eval: True   # Enable server-side global evaluation
+data:
+  root: data/
+  type: fl_digits
+dataloader:
+  batch_size: 64
+model:
+  type: cross_domain_digit_cnn
+  in_channels: 3
+  out_channels: 10
+  use_bn: True # 模型中是否添加BN层，默认为False
+train:
+  local_update_steps: 3
+  batch_or_epoch: epoch
+  optimizer:
+    type: SGD
+    lr: 0.01  # 匹配RethinkFL设置
+    momentum: 0.9
+    weight_decay: 1e-5  # 匹配RethinkFL设置
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss  # Change to test_acc since we now have evaluation
+trainer:
+  type: cvtrainer

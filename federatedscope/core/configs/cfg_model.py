@@ -63,6 +63,8 @@ def extend_model_cfg(cfg):
 
     cfg.regularizer.type = ''
     cfg.regularizer.mu = 0.
+    
+    cfg.model.use_bn = False
 
     # --------------- register corresponding check function ----------
     cfg.register_cfg_check_fun(assert_model_cfg)

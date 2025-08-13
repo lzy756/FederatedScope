@@ -3,11 +3,16 @@ from federatedscope.register import register_model
 
 
 class CrossDomainDigitCNN(nn.Module):
-    def __init__(self, in_channel=3, num_classes=10):
+    def __init__(self, in_channel=3, num_classes=10, use_bn=False):
         super(CrossDomainDigitCNN, self).__init__()
         self.conv1 = nn.Conv2d(in_channel, 16, kernel_size=3, stride=1, padding=1)
+        self.use_bn = use_bn
+        if use_bn:
+            self.bn1 = nn.BatchNorm2d(16)
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        if use_bn:
+            self.bn2 = nn.BatchNorm2d(32)
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         # Assuming input size is 32x32, after two pooling layers, the size will be 8x8
         self.fc1 = nn.Linear(32 * 8 * 8, 512)
@@ -16,9 +21,9 @@ class CrossDomainDigitCNN(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.relu(self.conv1(x))
+        x = self.relu(self.bn1(self.conv1(x))) if self.use_bn else self.conv1(x)
         x = self.pool1(x)
-        x = self.relu(self.conv2(x))
+        x = self.relu(self.bn2(self.conv2(x))) if self.use_bn else self.conv2(x)
         x = self.pool2(x)
         x = x.view(x.size(0), -1)  # Flatten the tensor
         x = self.relu(self.fc1(x))
@@ -27,7 +32,7 @@ class CrossDomainDigitCNN(nn.Module):
         return x
 
 
-def ModelBuilder(in_channel, num_classes):
+def ModelBuilder(in_channel, num_classes, use_bn):
     """
     Build the CrossDomainDigitCNN model based on the provided configuration.
 
@@ -38,7 +43,7 @@ def ModelBuilder(in_channel, num_classes):
     Returns:
         An instance of CrossDomainDigitCNN.
     """
-    return CrossDomainDigitCNN(in_channel=in_channel, num_classes=num_classes)
+    return CrossDomainDigitCNN(in_channel=in_channel, num_classes=num_classes, use_bn=use_bn)
 
 
 def call_cross_domain_digit_cnn(model_config, local_data):
@@ -55,8 +60,19 @@ def call_cross_domain_digit_cnn(model_config, local_data):
     if model_config.type == "cross_domain_digit_cnn":
         in_channel = getattr(model_config, "in_channels", 1)
         num_classes = getattr(model_config, "out_channels", 10)
-        return ModelBuilder(in_channel, num_classes)
+        use_bn = getattr(model_config, "use_bn", False)
+        return ModelBuilder(in_channel, num_classes, use_bn)
 
 
 # Register the model with the name 'cross_domain_digit_cnn'
 register_model("cross_domain_digit_cnn", call_cross_domain_digit_cnn)
+
+def main():
+    """
+    主函数：创建模型并打印所有参数名称
+    """
+    model = CrossDomainDigitCNN(in_channel=3, num_classes=10, use_bn=True)
+    for name, param in model.named_parameters():
+        print(f"- {name}")
+if __name__ == "__main__":
+    main()

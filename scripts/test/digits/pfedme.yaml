@@ -1,0 +1,48 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 42
+federate:
+  mode: standalone
+  total_round_num: 100
+  client_num: 200
+  sample_client_num: 50
+  method: pfedme
+data:
+  root: data/
+  type: digits
+  # consistent_label_distribution: False
+  splitter: lda
+  splitter_args: [{'alpha': 0.1}]
+dataloader:
+  batch_size: 64
+model:
+  type: cross_domain_digit_cnn
+  in_channels: 3
+  out_channels: 10
+  use_bn: True
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.1
+    weight_decay: 0.0
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
+trainer:
+  type: cvtrainer
+personalization:
+  K: 5 # pFedMe 内部迭代次数
+  beta: 1.0 # pFedMe 外层正则系数
+  local_param: [] # 可个性化的参数列表（空表⽰所有可训练参数都个性化）
+  local_update_steps: 5 # pFedMe 本地迭代步数（每轮内部迭代次数）
+  lr: 0.1 # pFedMe 内部更新学习率
+  regular_weight: 1.0 # pFedMe Moreau 正则权重
+  share_non_trainable_para: False

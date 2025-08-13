@@ -1,0 +1,35 @@
+use_gpu: True
+device: 0
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  mode: standalone
+  total_round_num: 500
+  client_num: 25
+  sample_client_num: 10
+data:
+  root: data/
+  type: ut_har_frequency_domains
+  splitter: lda
+  splitter_args: [{'alpha': 0.1}]
+  # consistent_label_distribution: False
+dataloader:
+  batch_size: 32
+model:
+  type: rnn
+  out_channels: 7
+train:
+  local_update_steps: 5
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 0.0005
+    weight_decay: 0.01
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 1
+  metrics: ['acc', 'loss']
