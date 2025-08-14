@@ -64,7 +64,7 @@ if [[ ! $max_windows =~ ^[0-9]+$ ]] || [[ $max_windows -lt 1 ]]; then
 fi
 
 # tmux 会话名称
-session_name="federated_exp"
+session_name="federated_exp_domainnet_vit"
 
 # 检查 tmux 是否已安装
 if ! command -v tmux &> /dev/null; then

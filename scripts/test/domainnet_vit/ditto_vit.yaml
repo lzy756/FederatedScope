@@ -44,7 +44,7 @@ eval:
   best_res_update_round_wise_key: test_loss
   split: ['test']
 
-personalization:
-  local_update_steps: 10
-  lr: 0.1
-  regular_weight: 0.1
+# personalization:
+#   local_update_steps: 10
+#   lr: 0.1
+#   regular_weight: 0.1

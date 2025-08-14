@@ -5,8 +5,8 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 200
-  client_num: 20
+  total_round_num: 500
+  client_num: 10
   method: local
 
 data:
@@ -14,9 +14,9 @@ data:
   type: office_caltech
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.8}] # 控制域内数据分布的参数
+  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
   splits: [0.6, 0, 0.4]
-  clients_per_domain: [10, 7, 2, 1]
+  clients_per_domain: [5, 3, 1, 1]
 
 
 dataloader:

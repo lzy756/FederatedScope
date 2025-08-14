@@ -72,6 +72,7 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
             FedGSAggregator,
             MIXAggregator,
             MGDAAggregator,
+            FDSEAggregator,
         )
 
     STR2AGG = {
@@ -138,6 +139,8 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
         return MIXAggregator(config=config)
     elif aggregator_type == "mgda":
         return MGDAAggregator(config=config)
+    elif aggregator_type == "fdse":
+        return FDSEAggregator(config=config)
     else:
         raise NotImplementedError(
             "Aggregator {} is not implemented.".format(aggregator_type)

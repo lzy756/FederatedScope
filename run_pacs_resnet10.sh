@@ -29,22 +29,22 @@ if [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
 fi
 
 # 定义要执行的命令数组
-commands[1]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ditto_pacs.yaml"
+commands[1]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ours_pacs.yaml"
 commands[2]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedavg_pacs.yaml"
 commands[3]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedprox_pacs.yaml"
 commands[4]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/FedBN_pacs.yaml"
 commands[5]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/local_pacs.yaml"
 commands[6]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/pFedMe_pacs.yaml"
-commands[7]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ours_pacs.yaml"
+commands[7]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ditto_pacs.yaml"
 
 # 定义任务名称数组
-task_names[1]="ditto"
+task_names[1]="ours"
 task_names[2]="fedavg"
 task_names[3]="fedprox"
 task_names[4]="FedBN"
 task_names[5]="local"
 task_names[6]="PFedMe"
-task_names[7]="ours"
+task_names[7]="ditto"
 
 # 配置参数
 total_commands=7
@@ -66,7 +66,7 @@ if [[ ! $max_windows =~ ^[0-9]+$ ]] || [[ $max_windows -lt 1 ]]; then
 fi
 
 # tmux 会话名称
-session_name="federated_exp"
+session_name="federated_exp_pacs_resnet10"
 
 # 检查 tmux 是否已安装
 if ! command -v tmux &> /dev/null; then

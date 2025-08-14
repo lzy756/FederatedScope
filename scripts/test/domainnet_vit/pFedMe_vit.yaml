@@ -45,6 +45,6 @@ eval:
   split: ['test']
 
 personalization:
-  K: 3
-  lr: -1.0
+  K: 5
+  lr: 0.1
   regular_weight: 1.0

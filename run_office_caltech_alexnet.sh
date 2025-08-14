@@ -29,20 +29,20 @@ if [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
 fi
 
 # 定义要执行的命令数组
-commands[1]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ditto_alexnet.yaml"
+commands[1]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ours_alexnet.yaml"
 commands[2]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedavg_alexnet.yaml"
 commands[3]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedprox_alexnet.yaml"
 commands[4]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/local_alexnet.yaml"
 commands[5]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/pFedMe_alexnet.yaml"
-commands[6]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ours_alexnet.yaml"
+commands[6]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ditto_alexnet.yaml"
 
 # 定义任务名称数组
-task_names[1]="ditto"
+task_names[1]="ours"
 task_names[2]="fedavg"
 task_names[3]="fedprox"
 task_names[4]="local"
 task_names[5]="PFedMe"
-task_names[6]="ours"
+task_names[6]="ditto"
 
 # 配置参数
 total_commands=6
@@ -64,7 +64,7 @@ if [[ ! $max_windows =~ ^[0-9]+$ ]] || [[ $max_windows -lt 1 ]]; then
 fi
 
 # tmux 会话名称
-session_name="federated_exp"
+session_name="federated_exp_office_caltech_alexnet"
 
 # 检查 tmux 是否已安装
 if ! command -v tmux &> /dev/null; then

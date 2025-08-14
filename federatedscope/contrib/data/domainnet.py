@@ -338,22 +338,49 @@ def _load_domain_dataset(
 
         # Sample data if needed to limit size
         all_data = full_images.all_data
-        if len(all_data) > 12000:  # Total limit before splitting
-            np.random.seed(42)  # For reproducibility
-            indices = np.random.choice(len(all_data), 12000, replace=False)
-            all_data = [all_data[i] for i in indices]
-            logger.info(
-                f"Sampled {len(all_data)} samples from total {len(full_images.all_data)}"
-            )
+        # if len(all_data) > 12000:  # Total limit before splitting
+        #     np.random.seed(42)  # For reproducibility
+        #     indices = np.random.choice(len(all_data), 12000, replace=False)
+        #     all_data = [all_data[i] for i in indices]
+        #     logger.info(
+        #         f"Sampled {len(all_data)} samples from total {len(full_images.all_data)}"
+        #     )
 
-        # Randomly shuffle data indices
-        indices = np.arange(len(all_data))
-        np.random.shuffle(indices)
+        # Group data by class to ensure stratified splitting
+        class_data = {}
+        for i, (_, label) in enumerate(all_data):
+            if label not in class_data:
+                class_data[label] = []
+            class_data[label].append(i)
 
-        # Split data into train and test sets
-        train_size = int(len(all_data) * train_ratio)
-        train_indices = indices[:train_size]
-        test_indices = indices[train_size:]
+        # Stratified split: ensure each class is represented in both train and test
+        train_indices = []
+        test_indices = []
+
+        for _, indices in class_data.items():
+            # Shuffle indices for this class
+            class_indices = np.array(indices)
+            np.random.shuffle(class_indices)
+
+            # Split this class according to train_ratio
+            class_train_size = int(len(class_indices) * train_ratio)
+            # Ensure at least one sample in each split if possible
+            if class_train_size == 0 and len(class_indices) > 1:
+                class_train_size = 1
+            elif class_train_size == len(class_indices) and len(class_indices) > 1:
+                class_train_size = len(class_indices) - 1
+
+            class_train_indices = class_indices[:class_train_size]
+            class_test_indices = class_indices[class_train_size:]
+
+            train_indices.extend(class_train_indices)
+            test_indices.extend(class_test_indices)
+
+        # Convert to numpy arrays and shuffle the final indices
+        train_indices = np.array(train_indices)
+        test_indices = np.array(test_indices)
+        np.random.shuffle(train_indices)
+        np.random.shuffle(test_indices)
 
         # Create train data list
         train_data = [all_data[i] for i in train_indices]

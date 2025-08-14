@@ -24,6 +24,7 @@ from federatedscope.core.aggregators.fedsak_aggregator import FedSAKAggregator
 from federatedscope.core.aggregators.fedgs_aggregator import FedGSAggregator
 from federatedscope.core.aggregators.mgda_aggregator import MGDAAggregator
 from federatedscope.core.aggregators.mix_aggregator import MIXAggregator
+from federatedscope.core.aggregators.fdse_aggregator import FDSEAggregator
 
 __all__ = [
     "Aggregator",
@@ -42,4 +43,5 @@ __all__ = [
     "FedGSAggregator",
     "MIXAggregator",  # MixFed, using FedGSAggregator
     "MGDAAggregator",
+    "FDSEAggregator",
 ]

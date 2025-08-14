@@ -25,6 +25,7 @@ AGGREGATOR_TYPE = {
     "fedgs": "fedgs",
     "mix": "mix",
     "mgda": "mgda",
+    "fdse": "fdse",
 }
 
 CLIENTS_TYPE = {
