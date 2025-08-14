@@ -20,7 +20,7 @@ data:
   clients_per_domain: [5, 3, 1, 1]
 
 dataloader:
-  batch_size: 16
+  batch_size: 64
 model:
   type: fdse_alexnet
   in_channels: 3
@@ -42,8 +42,8 @@ eval:
   split: ['test']
 trainer:
   type: fdsetrainer
-# aggregator:
-#   lambda_: 0.01 # 控制FedSAK的权重，为0时返回模型的平均值
+aggregator:
+  lambda_: 0.01
 
 personalization:
   local_param: ['num_batches_tracked']

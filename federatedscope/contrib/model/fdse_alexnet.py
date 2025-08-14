@@ -67,7 +67,6 @@ class DecomposedLayer(nn.Module):
 
     def __init__(self, original_conv, G=2):
         super().__init__()
-        # 计算DFE输出通道数 (T_dfe = ceil(T_original / G))
         T_original = original_conv.out_channels
         self.T_dfe = (T_original + G - 1) // G
 

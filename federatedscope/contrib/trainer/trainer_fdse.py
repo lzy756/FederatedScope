@@ -172,15 +172,12 @@ class FDSETrainer(GeneralTorchTrainer):
         layer_names = list(des_outputs.keys())  # 保存层名称以保持顺序
         beta = 0.001  # 控制权重递增速率的超参数，可根据需要调整
         momentum = 0.9
-        max_loss_value = 1e3  # 限制损失值的最大值，防止数值爆炸
+        max_loss_value = 10  # 限制损失值的最大值，防止数值爆炸
         for name in layer_names:
             dse_out = des_outputs[name]
             # 计算批次均值和方差
-            batch_mean = dse_out.mean(dim=[0, 2, 3], keepdim=True)
-            batch_var = dse_out.var(dim=[0, 2, 3], keepdim=True)
-            logger.info(
-                f"Layer: {name}, Batch Mean: {batch_mean.shape}, Batch Var: {batch_var.shape}"
-            )
+            batch_mean = dse_out.mean(dim=[0, 2, 3])
+            batch_var = dse_out.var(dim=[0, 2, 3])
             # 使用更平滑的更新规则
             local_running_mean = (
                 momentum * ctx.custom_bn_statistics[name]["running_mean"]
@@ -193,9 +190,11 @@ class FDSETrainer(GeneralTorchTrainer):
 
             global_running_mean = ctx.global_bn_statistics[name]["running_mean"]
             global_running_var = ctx.global_bn_statistics[name]["running_var"]
-
+            logger.info(
+                f"Layer: {name}, Batch Mean: {batch_mean.shape}, Batch Var: {batch_var.shape}, Global Mean: {global_running_mean.shape}, Global Var: {global_running_var.shape}"
+            )
             # 获取特征维度d（通道数）用于归一化
-            d = local_running_mean.size(1)  # 假设形状为[1, C, 1, 1]，C是通道数
+            d = local_running_mean.shape[0]  # 假设形状为[C]，C是通道数
 
             # 计算均值的L2损失
             mean_loss = (
