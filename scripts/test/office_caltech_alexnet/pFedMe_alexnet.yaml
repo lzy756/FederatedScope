@@ -20,7 +20,7 @@ data:
   clients_per_domain: [5, 3, 1, 1]
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
 model:
   type: office_caltech_alexnet
   in_channels: 3
@@ -47,3 +47,6 @@ personalization:
   K: 5
   lr: 0.1
   regular_weight: 1.0
+
+grad:
+  grad_clip: 5.0

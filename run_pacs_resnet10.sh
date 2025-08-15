@@ -30,24 +30,26 @@ fi
 
 # 定义要执行的命令数组
 commands[1]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ours_pacs.yaml"
-commands[2]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedavg_pacs.yaml"
-commands[3]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedprox_pacs.yaml"
-commands[4]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/FedBN_pacs.yaml"
-commands[5]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/local_pacs.yaml"
-commands[6]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/pFedMe_pacs.yaml"
-commands[7]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ditto_pacs.yaml"
+commands[2]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fdse_pacs.yaml"
+commands[3]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedavg_pacs.yaml"
+commands[4]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/fedprox_pacs.yaml"
+commands[5]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/FedBN_pacs.yaml"
+commands[6]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/local_pacs.yaml"
+commands[7]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/pFedMe_pacs.yaml"
+commands[8]="python federatedscope/main.py --cfg ./scripts/test/pacs_resnet10/ditto_pacs.yaml"
 
 # 定义任务名称数组
 task_names[1]="ours"
-task_names[2]="fedavg"
-task_names[3]="fedprox"
-task_names[4]="FedBN"
-task_names[5]="local"
-task_names[6]="PFedMe"
-task_names[7]="ditto"
+task_names[2]="fdse"
+task_names[3]="fedavg"
+task_names[4]="fedprox"
+task_names[5]="FedBN"
+task_names[6]="local"
+task_names[7]="PFedMe"
+task_names[8]="ditto"
 
 # 配置参数
-total_commands=7
+total_commands=8
 default_max_windows=3
 
 # 从命令行参数获取窗口数量，如果没有提供则使用默认值

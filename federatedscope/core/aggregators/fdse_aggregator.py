@@ -8,8 +8,9 @@ logger = logging.getLogger(__name__)
 
 
 class FDSEAggregator(ClientsAvgAggregator):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, model=None, device="cpu", config=None):
+        super().__init__(model=model, device=device, config=config)
+        self.lambda_ = config.aggregator.lambda_
 
     def aggregate(self, agg_info):
         return self._aggregate(agg_info["client_feedback"])
@@ -70,6 +71,9 @@ class FDSEAggregator(ClientsAvgAggregator):
         dse_params = []
         other_params = []
 
+        # 对于dfe.conv参数，使用FedSAK进行聚合
+        # 对于dse中的可训练参数，使用注意力机制进行聚合
+
         for param_name in param_names:
             if self._is_non_trainable_param(param_name):
                 non_trainable_params.append(param_name)
@@ -86,10 +90,8 @@ class FDSEAggregator(ClientsAvgAggregator):
 
         logger.info(f"不可训练参数: {non_trainable_params}")
         logger.info(f"DFE参数: {dfe_params}")
-        # DSE只显示前10个，避免日志过长
         logger.info(f"DSE参数: {dse_params[:10]}")
         logger.info(f"其他参数: {other_params}")
-        #
 
         # 初始化每个客户端的聚合结果
         aggregated_client_params = [{} for _ in range(num_clients)]
@@ -130,7 +132,9 @@ class FDSEAggregator(ClientsAvgAggregator):
                 logger.debug(f"客户端 {i} 的DFE状态包含 {len(dfe_state)} 个参数")
 
             # 使用fedsak_update进行聚合
-            updated_dfe_states = self._fedsak_update(dfe_client_states, lambda_reg=0.1)
+            updated_dfe_states = self._fedsak_update(
+                dfe_client_states, lambda_reg=self.lambda_
+            )
             logger.info("FedSAK聚合完成")
 
             # 将FedSAK更新后的结果直接分配给对应的客户端
@@ -192,7 +196,7 @@ class FDSEAggregator(ClientsAvgAggregator):
         return {"model_para_all": aggregated_client_params}
 
     def _is_non_trainable_param(self, param_name: str) -> bool:
-        """判断参数是否为不可训练参数（如BatchNorm的统计量）"""
+        """判断参数是否为不可训练参数"""
         non_trainable_keywords = [
             "running_mean",
             "running_var",
@@ -206,7 +210,7 @@ class FDSEAggregator(ClientsAvgAggregator):
 
     def _is_dfe_param(self, param_name: str) -> bool:
         """判断参数是否属于DFE模块"""
-        return "dfe" in param_name.lower() and "conv" in param_name.lower()
+        return "dfe.conv" in param_name.lower()
 
     def _is_dse_param(self, param_name: str) -> bool:
         """判断参数是否属于DSE模块"""

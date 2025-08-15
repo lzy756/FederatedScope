@@ -8,7 +8,7 @@ federate:
   total_round_num: 500
   client_num: 40
   method: ditto
-  sample_client_num: 10 # 每轮选取的用户数
+  sample_client_num: 20 # 每轮选取的用户数
 
 data:
   root: data/PACS/
@@ -21,7 +21,7 @@ data:
 
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
 model:
   type: pacs_resnet10
   in_channels: 3

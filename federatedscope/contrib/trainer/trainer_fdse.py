@@ -68,10 +68,13 @@ class FDSETrainer(GeneralTorchTrainer):
         )
         filtered_model_para = {}
         for name, param in model_para.items():
-            if "dse.submodules" in name and (
-                "running_mean" in name or "running_var" in name
-            ):
-                continue
+            if "dse.submodules" in name:
+                if "running_mean" in name or "running_var" in name:
+                    continue
+
+                if "0.weight" in name or "0.bias" in name:
+                    continue
+
             filtered_model_para[name] = param
         logger.info(
             f"model param before: {len(model_para)}, after: {len(filtered_model_para)}, removed: {len(model_para) - len(filtered_model_para)}"
@@ -190,9 +193,6 @@ class FDSETrainer(GeneralTorchTrainer):
 
             global_running_mean = ctx.global_bn_statistics[name]["running_mean"]
             global_running_var = ctx.global_bn_statistics[name]["running_var"]
-            logger.info(
-                f"Layer: {name}, Batch Mean: {batch_mean.shape}, Batch Var: {batch_var.shape}, Global Mean: {global_running_mean.shape}, Global Var: {global_running_var.shape}"
-            )
             # 获取特征维度d（通道数）用于归一化
             d = local_running_mean.shape[0]  # 假设形状为[C]，C是通道数
 
@@ -206,7 +206,7 @@ class FDSETrainer(GeneralTorchTrainer):
             global_var_l1 = torch.norm(global_running_var, p=1)
             var_loss = ((local_var_l1 - global_var_l1) / d) ** 2
 
-            # 计算当前层的一致性损失（添加损失值限制）
+            # 计算当前层的一致性损失
             layer_loss_con = mean_loss + var_loss
             logger.info(
                 f"Layer: {name}, Consistency Loss: {layer_loss_con.item()}, mean loss: {mean_loss.item()}, var loss: {var_loss.item()}"
@@ -232,7 +232,6 @@ class FDSETrainer(GeneralTorchTrainer):
 
         # 计算总一致性损失（使用指数权重的多层聚合）
         if loss_con_list:
-
             L = len(loss_con_list)
             layer_indices = torch.tensor(
                 [i + 1 for i in range(L)], device=ctx.device, dtype=torch.float32
@@ -240,13 +239,14 @@ class FDSETrainer(GeneralTorchTrainer):
 
             exp_weights = torch.exp(beta * layer_indices)
             exp_weights = exp_weights / exp_weights.sum()
-            logger.info(f"Consistency loss weights: {exp_weights}")
             loss_con_values = torch.stack(loss_con_list).to(exp_weights.dtype)
             loss_con = torch.sum(loss_con_values * exp_weights)
         else:
             loss_con = torch.tensor(0.0, device=ctx.device)
 
-        logger.info(f"Consistency loss: {loss_con.item()}, list: {loss_con_list}")
+        logger.info(
+            f"Consistency loss: {loss_con.item()}, list: {[l.item() for l in loss_con_list]}"
+        )
         ctx.y_true = CtxVar(label, LIFECYCLE.BATCH)
         ctx.y_prob = CtxVar(pred, LIFECYCLE.BATCH)
         ctx.loss_batch = CtxVar(ctx.criterion(pred, label) + loss_con, LIFECYCLE.BATCH)

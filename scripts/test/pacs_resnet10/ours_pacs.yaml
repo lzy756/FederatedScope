@@ -19,7 +19,7 @@ data:
   clients_per_domain: [10, 10, 10, 10]
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
 model:
   type: pacs_resnet10
   in_channels: 3

@@ -21,7 +21,7 @@ data:
 
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
 model:
   type: pacs_resnet10
   in_channels: 3

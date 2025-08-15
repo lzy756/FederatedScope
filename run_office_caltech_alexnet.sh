@@ -30,22 +30,24 @@ fi
 
 # 定义要执行的命令数组
 commands[1]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ours_alexnet.yaml"
-commands[2]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedavg_alexnet.yaml"
-commands[3]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedprox_alexnet.yaml"
-commands[4]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/local_alexnet.yaml"
-commands[5]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/pFedMe_alexnet.yaml"
-commands[6]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ditto_alexnet.yaml"
+commands[2]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fdse_alexnet.yaml"
+commands[3]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedavg_alexnet.yaml"
+commands[4]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedprox_alexnet.yaml"
+commands[5]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/local_alexnet.yaml"
+commands[6]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/pFedMe_alexnet.yaml"
+commands[7]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ditto_alexnet.yaml"
 
 # 定义任务名称数组
 task_names[1]="ours"
-task_names[2]="fedavg"
-task_names[3]="fedprox"
-task_names[4]="local"
-task_names[5]="PFedMe"
-task_names[6]="ditto"
+task_names[2]="fdse"
+task_names[3]="fedavg"
+task_names[4]="fedprox"
+task_names[5]="local"
+task_names[6]="PFedMe"
+task_names[7]="ditto"
 
 # 配置参数
-total_commands=6
+total_commands=7
 default_max_windows=3
 
 # 从命令行参数获取窗口数量，如果没有提供则使用默认值

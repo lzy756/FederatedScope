@@ -23,9 +23,11 @@ data:
   splits: [0.6, 0, 0.4]
   clients_per_domain: [5, 3, 1, 1]
 
+grad:
+  grad_clip: 5.0
 
 dataloader:
-  batch_size: 16
+  batch_size: 32
 model:
   type: office_caltech_alexnet
   in_channels: 3

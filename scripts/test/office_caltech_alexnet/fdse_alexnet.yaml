@@ -20,7 +20,7 @@ data:
   clients_per_domain: [5, 3, 1, 1]
 
 dataloader:
-  batch_size: 64
+  batch_size: 32
 model:
   type: fdse_alexnet
   in_channels: 3
@@ -31,6 +31,9 @@ train:
   optimizer:
     lr: 0.01
     weight_decay: 1e-4
+
+grad:
+  grad_clip: 5.0
 
 criterion:
   type: CrossEntropyLoss
@@ -43,7 +46,7 @@ eval:
 trainer:
   type: fdsetrainer
 aggregator:
-  lambda_: 0.01
+  lambda_: 0.005
 
 personalization:
   local_param: ['num_batches_tracked']

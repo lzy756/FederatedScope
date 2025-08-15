@@ -165,6 +165,7 @@ class FDSEModel(nn.Module):
         """
         with torch.no_grad():
             bn_statistics = {}
+            # decomposed_layer_0
             for name, layer in self.features.named_children():
                 if name.startswith("decomposed_layer_"):
                     bn_dfe = layer.bn_dfe
@@ -184,7 +185,7 @@ def model_builder(model_config, local_data):
     num_classes = model_config.out_channels
     drop_out = 0.5
     alexnet_model = AlexNet(num_classes=num_classes, dropout=drop_out)
-    return FDSEModel(alexnet_model, G=2)
+    return FDSEModel(alexnet_model, G=32)
 
 
 def call_fdse_alexnet(model_config, local_data):

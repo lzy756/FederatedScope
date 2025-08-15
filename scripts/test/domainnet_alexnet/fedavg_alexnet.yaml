@@ -6,25 +6,25 @@ seed: 42
 federate:
   mode: standalone
   total_round_num: 500
-  client_num: 40
+  client_num: 24
   method: fedavg
-  sample_client_num: 20 # 每轮选取的用户数
+  sample_client_num: 12 # 每轮选取的用户数
 
 data:
-  root: data/PACS/
-  type: pacs
+  root: data/domainnet/
+  type: domainnet
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
-  splits: [0.4, 0, 0.6]
-  clients_per_domain: [10, 10, 10, 10]
+  splitter_args: [{'alpha': 0.8}] # 控制域内数据分布的参数
+  splits: [0.6, 0, 0.4]
+  clients_per_domain: [4, 4, 4, 4, 4, 4]
 
 dataloader:
   batch_size: 32
 model:
-  type: pacs_resnet10
+  type: office_caltech_alexnet
   in_channels: 3
-  out_channels: 7
+  out_channels: 50
   
 train:
   local_update_steps: 1
@@ -32,6 +32,9 @@ train:
   optimizer:
     lr: 0.01
     weight_decay: 1e-4
+
+grad:
+  grad_clip: 5.0
 
 criterion:
   type: CrossEntropyLoss
