@@ -1,0 +1,63 @@
+2025-08-14 19:10:05,998 (utils:147) INFO: The device information file is not provided
+2025-08-14 19:10:05,998 (fed_runner:320) INFO: data: <class 'federatedscope.core.data.base_data.StandaloneDataDict'>, 201
+2025-08-14 19:10:06,042 (mix_worker:170) INFO: Using test set distribution as target: {'0': 0.10574, '1': 0.142264, '2': 0.126717, '3': 0.09967, '4': 0.098073, '5': 0.091471, '6': 0.085614, '7': 0.087211, '8': 0.078692, '9': 0.084549}
+2025-08-14 19:10:06,043 (mix_worker:171) INFO: Loaded training data distribution for 200 clients
+2025-08-14 19:10:06,043 (mix_worker:174) INFO: Loaded 10 peer communities
+2025-08-14 19:10:06,044 (mix_worker:401) INFO: Feature calculation completed:
+2025-08-14 19:10:06,044 (mix_worker:402) INFO: Feature matrix P shape: (10, 10)
+2025-08-14 19:10:06,044 (mix_worker:403) INFO: Average sample counts per client for each PC:
+2025-08-14 19:10:06,045 (mix_worker:408) INFO: PC #1 (18 clients): [ 1.611111  1.388889  4.222222  6.277778  1.444444 10.055556  1.833333
+  9.555556  7.944444 97.388889]
+2025-08-14 19:10:06,045 (mix_worker:408) INFO: PC #2 (24 clients): [  6.       166.666667   7.958333   2.208333   4.75       3.208333
+   9.958333   9.875      7.833333  14.5     ]
+2025-08-14 19:10:06,046 (mix_worker:408) INFO: PC #3 (22 clients): [ 17.227273   7.5       27.772727   3.727273   8.5       17.318182
+ 112.772727   5.954545   0.136364  12.863636]
+2025-08-14 19:10:06,046 (mix_worker:408) INFO: PC #4 (16 clients): [ 0.9375 14.3125  6.      0.6875  7.25   88.8125  2.5    10.4375  2.125
+  3.125 ]
+2025-08-14 19:10:06,047 (mix_worker:408) INFO: PC #5 (25 clients): [  4.92   1.24   1.72   4.2  109.12   2.84   1.8    1.4    2.84   4.52]
+2025-08-14 19:10:06,047 (mix_worker:408) INFO: PC #6 (20 clients): [  4.5    0.8   14.25   4.65   0.65   3.95   7.15 103.95   3.25   9.15]
+2025-08-14 19:10:06,048 (mix_worker:408) INFO: PC #7 (18 clients): [  4.833333   4.611111 147.555556  14.333333   0.444444  12.555556
+   2.611111  14.666667  33.722222   5.888889]
+2025-08-14 19:10:06,048 (mix_worker:408) INFO: PC #8 (16 clients): [  4.3125  17.875    1.      10.5     10.5625  13.0625   5.375   11.3125
+ 104.      10.0625]
+2025-08-14 19:10:06,049 (mix_worker:408) INFO: PC #9 (21 clients): [133.095238   7.238095   5.666667   1.428571   9.47619   20.238095
+   7.809524   6.47619   12.714286   5.666667]
+2025-08-14 19:10:06,049 (mix_worker:408) INFO: PC #10 (20 clients): [  9.95   7.95   4.5  146.75   7.9   20.05   8.05   4.65   8.2   10.2 ]
+2025-08-14 19:10:06,049 (mix_worker:411) INFO: Target distribution: [0.10574  0.142264 0.126717 0.09967  0.098073 0.091471 0.085614 0.087211
+ 0.078692 0.084549]
+2025-08-14 19:10:06,050 (mix_worker:428) INFO: Starting template solving using Binary Split method...
+2025-08-14 19:10:06,051 (mix_worker:494) INFO: Matrix A shape: (10, 10)
+2025-08-14 19:10:06,051 (mix_worker:495) INFO: Vector M shape: (10,)
+2025-08-14 19:10:06,051 (mix_worker:496) INFO: Upper bounds B: [18. 24. 22. 16. 25. 20. 18. 16. 21. 20.]
+2025-08-14 19:10:06,051 (mix_worker:497) INFO: Total clusters K: 10
+2025-08-14 19:10:06,051 (mix_worker:498) INFO: Total clients to select S: 50
+2025-08-14 19:10:06,051 (mix_worker:499) INFO: Target total clients: 50
+2025-08-14 19:10:06,051 (mix_worker:500) INFO: Additional clients beyond mandatory (S-K): 40
+2025-08-14 19:10:06,052 (mix_worker:523) INFO: Binary decomposition: G = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5], total binary vars = 50
+2025-08-14 19:10:06,247 (mix_worker:622) INFO: Gurobi solved successfully with objective value: 42101.349694
+2025-08-14 19:10:06,248 (mix_worker:780) INFO: Feature match score: 70.0% (7/10 features matched within 5% error)
+2025-08-14 19:10:06,248 (mix_worker:783) INFO: Max absolute difference: 24.2715
+2025-08-14 19:10:06,248 (mix_worker:784) INFO: L2 norm of differences: 39.9979
+2025-08-14 19:10:06,248 (mix_worker:785) INFO: KL divergence: 0.0008
+2025-08-14 19:10:06,249 (mix_worker:786) INFO: Predicted features: [335.457587 457.320427 394.291355 324.604105 338.103867 292.632721
+ 251.18018  294.80069  249.269012 262.340056]
+2025-08-14 19:10:06,249 (mix_worker:787) INFO: Target features: [338.366521 455.244383 405.494623 318.943669 313.832393 292.705782
+ 273.964434 279.075711 251.815568 270.556916]
+2025-08-14 19:10:06,250 (mix_worker:788) INFO: Absolute difference: [ -2.908934   2.076044 -11.203268   5.660435  24.271475  -0.073061
+ -22.784254  15.724979  -2.546556  -8.21686 ]
+2025-08-14 19:10:06,251 (mix_worker:789) INFO: Relative difference: [-0.008597  0.00456  -0.027629  0.017747  0.077339 -0.00025  -0.083165
+  0.056347 -0.010113 -0.03037 ]
+2025-08-14 19:10:06,252 (mix_worker:451) INFO: Template solved successfully: h = [3. 8. 5. 3. 5. 4. 7. 3. 6. 6.]
+2025-08-14 19:10:13,194 (mix_worker:806) INFO: Round 0: Selecting clients from clusters using template h = [3. 8. 5. 3. 5. 4. 7. 3. 6. 6.]
+2025-08-14 19:10:13,194 (mix_worker:840) INFO: Selected clients from 10 clusters for round 0:
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #0: 3 clients - [36, 16, 81]
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #1: 8 clients - [57, 195, 52, 50, 140, 49, 126, 15]
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #2: 5 clients - [17, 34, 71, 74, 157]
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #3: 3 clients - [3, 89, 20]
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #4: 5 clients - [189, 179, 166, 115, 79]
+2025-08-14 19:10:13,194 (mix_worker:845) INFO: Cluster #5: 4 clients - [130, 194, 67, 18]
+2025-08-14 19:10:13,195 (mix_worker:845) INFO: Cluster #6: 7 clients - [61, 145, 100, 60, 29, 53, 185]
+2025-08-14 19:10:13,195 (mix_worker:845) INFO: Cluster #7: 3 clients - [48, 33, 101]
+2025-08-14 19:10:13,195 (mix_worker:845) INFO: Cluster #8: 6 clients - [37, 108, 190, 88, 6, 122]
+2025-08-14 19:10:13,195 (mix_worker:845) INFO: Cluster #9: 6 clients - [180, 22, 138, 14, 94, 143]
+2025-08-14 19:10:13,195 (mix_worker:849) INFO: Total clients selected: 50 (expected: 50)

@@ -12,9 +12,9 @@ federate:
 data:
   root: data/
   type: digits
-  consistent_label_distribution: False
+  # consistent_label_distribution: False
   splitter: lda
-  splitter_args: [{'alpha': 0.1}]
+  splitter_args: [{'alpha': 0.5}]
 dataloader:
   batch_size: 64
 model:
@@ -23,7 +23,7 @@ model:
   out_channels: 10
   use_bn: True
 train:
-  local_update_steps: 10
+  local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
     lr: 0.1

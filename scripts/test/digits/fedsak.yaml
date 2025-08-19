@@ -5,7 +5,7 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 100
+  total_round_num: 500
   client_num: 200
   sample_client_num: 50
   method: fedsak
@@ -26,7 +26,7 @@ train:
   local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.1
+    lr: 0.001
     weight_decay: 0.0
 grad:
   grad_clip: 5.0
@@ -73,3 +73,5 @@ fedsak:
     - fc3.bias
 trainer:
   type: fedsak
+personalization:
+  local_param: ['bn']

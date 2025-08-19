@@ -52,9 +52,9 @@ class FedSAKServer(Server):
                              sample_client_num=-1,
                              filter_unseen_clients=True):
         """覆写广播模型参数方法"""
-        if self.state >= self._cfg.federate.total_round_num:
-            self.terminate(msg_type='finish')
-            return
+        # 注意：不要在这里因为达到总轮次而提前终止，否则会跳过最终评估阶段
+        # 与 mix 的实现保持一致：让 eval() 负责在最终评估后触发保存与终止
+        # 仅当确实需要无评估直接结束时才终止（此处不做提前终止）
 
         # 如果是评估请求，直接发送给所有客户端
         if msg_type == 'evaluate':
