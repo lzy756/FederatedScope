@@ -1,0 +1,51 @@
+use_gpu: True
+device: 1
+early_stop:
+  patience: 0
+seed: 42
+federate:
+  mode: standalone
+  total_round_num: 500
+  client_num: 24
+  method: fedavg
+  sample_client_num: 12 # 每轮选取的用户数
+
+data:
+  root: data/domainnet/
+  type: domainnet
+  consistent_label_distribution: True
+  splitter: lda
+  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
+  splits: [0.6, 0, 0.4]
+  clients_per_domain: [4, 4, 4, 4, 4, 4]
+
+dataloader:
+  batch_size: 64
+model:
+  type: office_caltech_alexnet
+  in_channels: 3
+  out_channels: 20
+  
+train:
+  local_update_steps: 2
+  batch_or_epoch: epoch
+  optimizer:
+    lr: 0.05
+    weight_decay: 1e-4
+
+grad:
+  grad_clip: 5.0
+
+
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: cvtrainer
+eval:
+  freq: 1
+  metrics: ['acc', 'correct']
+  best_res_update_round_wise_key: test_loss
+  split: ['test']
+
+personalization:
+  local_param: ['bn', 'norms']
