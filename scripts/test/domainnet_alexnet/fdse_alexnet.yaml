@@ -15,18 +15,18 @@ data:
   type: domainnet
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.8}] # 控制域内数据分布的参数
+  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
   splits: [0.6, 0, 0.4]
   clients_per_domain: [4, 4, 4, 4, 4, 4]
 
 dataloader:
-  batch_size: 32
+  batch_size: 64
 model:
   type: fdse_alexnet
   in_channels: 3
-  out_channels: 50
+  out_channels: 20
 train:
-  local_update_steps: 1
+  local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
     lr: 0.01
@@ -45,8 +45,6 @@ eval:
   split: ['test']
 trainer:
   type: fdsetrainer
-aggregator:
-  lambda_: 0.005
 
 personalization:
   local_param: ['num_batches_tracked']

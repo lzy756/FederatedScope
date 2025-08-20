@@ -1,8 +1,9 @@
 import logging
 import torch
 import torch.nn.functional as F
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from federatedscope.core.aggregators import ClientsAvgAggregator
+from typing import List, Dict, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,6 @@ logger = logging.getLogger(__name__)
 class FDSEAggregator(ClientsAvgAggregator):
     def __init__(self, model=None, device="cpu", config=None):
         super().__init__(model=model, device=device, config=config)
-        self.lambda_ = config.aggregator.lambda_
 
     def aggregate(self, agg_info):
         return self._aggregate(agg_info["client_feedback"])
@@ -19,60 +19,51 @@ class FDSEAggregator(ClientsAvgAggregator):
         self, client_feedback: List[Dict[str, torch.Tensor]]
     ) -> Dict[str, List[Dict[str, torch.Tensor]]]:
         """
-        FDSE聚合函数
+        FDSE aggregation function
 
         Args:
-            client_feedback: 客户端反馈列表，每个元素包含：
-                - 'client_id': 客户端ID
-                - 'model_para': 模型参数字典
+            client_feedback: List of client feedback, each element contains:
+                - 'client_id': Client ID
+                - 'model_para': Model parameter dictionary
 
         Returns:
-            包含多个客户端模型参数字典的结果：
+            Result containing multiple client model parameter dictionaries:
             {
                 "model_para_all": [client_0_params, client_1_params, ...]
             }
         """
-        logger.info(f"FDSE聚合器开始聚合，客户端数量: {len(client_feedback)}")
+        logger.info(
+            f"FDSE aggregator starting aggregation, number of clients: {len(client_feedback)}"
+        )
 
         if not client_feedback:
-            logger.warning("客户端反馈为空，返回空结果")
+            logger.warning("Client feedback is empty, returning empty result")
             return {"model_para_all": []}
 
         num_clients = len(client_feedback)
-        logger.debug(f"正在处理 {num_clients} 个客户端的参数")
+        logger.debug(f"Processing parameters from {num_clients} clients")
 
-        # 提取客户端参数和权重
-        client_params = []
-        sample_counts = []
+        # Extract client parameters and weights
+        client_ids = [feedback["client_id"] for feedback in client_feedback]
+        sample_counts = [feedback["model_para"][0] for feedback in client_feedback]
+        client_params = [feedback["model_para"][1] for feedback in client_feedback]
 
-        for i, feedback in enumerate(client_feedback):
-            sample_size, model_para = feedback["model_para"]
-            sample_counts.append(sample_size)
-            client_params.append(model_para)
-            logger.debug(
-                f"客户端 {i}: 样本数量 {sample_size}, 参数数量 {len(model_para)}"
-            )
-
-        # 计算归一化权重
+        # Calculate normalized weights
         total_samples = sum(sample_counts)
         weights = [count / total_samples for count in sample_counts]
         logger.info(
-            f"总样本数: {total_samples}, 权重分布: {[f'{w:.4f}' for w in weights]}"
+            f"Total samples: {total_samples}, weight distribution: {[f'{w:.4f}' for w in weights]}"
         )
 
-        # 获取所有参数名称
-        param_names = set()
-        for params in client_params:
-            param_names.update(params.keys())
-        param_names = sorted(param_names)
+        # Get all parameter names
+        param_names = list(client_params[0].keys())
 
         non_trainable_params = []
         dfe_params = []
         dse_params = []
         other_params = []
 
-        # 对于dfe.conv参数，使用FedSAK进行聚合
-        # 对于dse中的可训练参数，使用注意力机制进行聚合
+        # For trainable parameters in DSE, use attention mechanism for aggregation
 
         for param_name in param_names:
             if self._is_non_trainable_param(param_name):
@@ -85,21 +76,21 @@ class FDSEAggregator(ClientsAvgAggregator):
                 other_params.append(param_name)
 
         logger.info(
-            f"参数分类完成 - 不可训练参数: {len(non_trainable_params)}, DFE参数: {len(dfe_params)}, DSE参数: {len(dse_params)}, 其他参数: {len(other_params)}"
+            f"Parameter classification completed - Non-trainable params: {len(non_trainable_params)}, DFE params: {len(dfe_params)}, DSE params: {len(dse_params)}, Other params: {len(other_params)}"
         )
 
-        logger.info(f"不可训练参数: {non_trainable_params}")
-        logger.info(f"DFE参数: {dfe_params}")
-        logger.info(f"DSE参数: {dse_params[:10]}")
-        logger.info(f"其他参数: {other_params}")
+        logger.info(f"Non-trainable parameters: {non_trainable_params}")
+        logger.info(f"DFE parameters: {dfe_params}")
+        logger.info(f"DSE parameters: {dse_params[:10]}")
+        logger.info(f"Other parameters: {other_params}")
 
-        # 初始化每个客户端的聚合结果
-        aggregated_client_params = [{} for _ in range(num_clients)]
+        # Initialize aggregation results for each client
+        aggregated_client_params = {client_id: {} for client_id in client_ids}
 
-        # 0. 不可训练参数（如running_mean, running_var）使用简单平均聚合，分发给所有客户端
+        # 0. Non-trainable parameters (e.g., running_mean, running_var) use simple average aggregation, distribute to all clients
         if non_trainable_params:
             logger.info(
-                f"开始聚合 {len(non_trainable_params)} 个不可训练参数，使用简单平均"
+                f"Starting aggregation of {len(non_trainable_params)} non-trainable parameters using simple average"
             )
             for param_name in non_trainable_params:
                 param_tensors = [
@@ -107,96 +98,110 @@ class FDSEAggregator(ClientsAvgAggregator):
                     for params in client_params
                     if param_name in params
                 ]
-                if param_tensors:
-                    logger.debug(
-                        f"正在聚合不可训练参数 '{param_name}', 张量形状: {param_tensors[0].shape}"
-                    )
-                    # 使用简单平均聚合（不使用样本权重）
-                    aggregated_param = self._simple_average(param_tensors)
-                    # 将聚合结果复制给每个客户端
-                    for i in range(num_clients):
-                        aggregated_client_params[i][
-                            param_name
-                        ] = aggregated_param.clone()
-            logger.info("不可训练参数简单平均聚合完成")
 
-        # 1. DFE模块使用fedsak_update，结果分发给每个客户端
+                logger.info(
+                    f"Aggregating non-trainable parameter '{param_name}', tensor norm '{[p.norm().item() for p in param_tensors]}'"
+                )
+                # Use simple average aggregation (no sample weights)
+                aggregated_param = self._simple_average(param_tensors)
+                # Copy aggregation result to each client
+                for client_id in client_ids:
+                    aggregated_client_params[client_id][
+                        param_name
+                    ] = aggregated_param.clone()
+            logger.info("Non-trainable parameter simple average aggregation completed")
+
+        # 1. DFE module uses FedSAK aggregation
         if dfe_params:
-            logger.info(f"开始聚合 {len(dfe_params)} 个DFE参数，使用FedSAK算法")
-            dfe_client_states = []
-            for i, params in enumerate(client_params):
-                dfe_state = {
-                    name: params[name] for name in dfe_params if name in params
-                }
-                dfe_client_states.append(dfe_state)
-                logger.debug(f"客户端 {i} 的DFE状态包含 {len(dfe_state)} 个参数")
-
-            # 使用fedsak_update进行聚合
-            updated_dfe_states = self._fedsak_update(
-                dfe_client_states, lambda_reg=self.lambda_
+            logger.info(
+                f"Starting aggregation of {len(dfe_params)} DFE parameters using FedSAK aggregation"
             )
-            logger.info("FedSAK聚合完成")
+            for param_name in dfe_params:
+                param_tensors = [
+                    params[param_name]
+                    for params in client_params
+                    if param_name in params
+                ]
 
-            # 将FedSAK更新后的结果直接分配给对应的客户端
-            for i in range(num_clients):
-                for param_name in dfe_params:
-                    if param_name in updated_dfe_states[i]:
-                        aggregated_client_params[i][param_name] = updated_dfe_states[i][
-                            param_name
-                        ]
+                # Use weighted average aggregation
+                aggregated_param = self._weighted_average(param_tensors, weights)
+                # Copy aggregation result to each client
+                for client_id in client_ids:
+                    aggregated_client_params[client_id][
+                        param_name
+                    ] = aggregated_param.clone()
+            logger.info("Weighted average aggregation completed")
+            # Extract DFE parameters for all clients
+            # dfe_client_states = []
+            # for params in client_params:
+            #     dfe_state = {
+            #         param_name: params[param_name]
+            #         for param_name in dfe_params
+            #         if param_name in params
+            #     }
+            #     dfe_client_states.append(dfe_state)
 
-        # 2. DSE模块使用注意力机制聚合，每个客户端得到专属结果
+            # # Apply FedSAK aggregation
+            # updated_dfe_states = self._fedsak_update(dfe_client_states, lambda_reg=0.01)
+
+            # # Assign updated DFE parameters to each client
+            # for i, client_id in enumerate(client_ids):
+            #     for param_name in dfe_params:
+            #         if param_name in updated_dfe_states[i]:
+            #             aggregated_client_params[client_id][param_name] = (
+            #                 updated_dfe_states[i][param_name]
+            #             )
+            # logger.info("DFE parameter FedSAK aggregation completed")
+
+        # 2. DSE module uses attention mechanism aggregation, each client gets personalized result
         if dse_params:
-            logger.info(f"开始聚合 {len(dse_params)} 个DSE参数，使用注意力机制")
+            logger.info(
+                f"Starting aggregation of {len(dse_params)} DSE parameters using attention mechanism"
+            )
             for param_name in dse_params:
                 param_tensors = [
                     params[param_name]
                     for params in client_params
                     if param_name in params
                 ]
-                if param_tensors:
-                    logger.debug(
-                        f"正在聚合DSE参数 '{param_name}', 张量形状: {param_tensors[0].shape}"
-                    )
-                    # 使用注意力机制聚合，返回每个客户端的专属结果
-                    client_specific_results = self._attention_aggregate(param_tensors)
-                    # 将每个客户端的专属结果分配给对应客户端
-                    for i in range(num_clients):
-                        if i < len(client_specific_results):
-                            aggregated_client_params[i][param_name] = (
-                                client_specific_results[i]
-                            )
-            logger.info("注意力机制聚合完成")
 
-        # 3. 其他参数使用加权平均聚合，结果复制给每个客户端
+                # Use attention mechanism aggregation, return personalized result for each client
+                client_specific_results = self._attention_aggregate(param_tensors)
+                # Assign each client's personalized result to corresponding client
+                for i, client_id in enumerate(client_ids):
+                    aggregated_client_params[client_id][param_name] = (
+                        client_specific_results[i]
+                    )
+            logger.info("Attention mechanism aggregation completed")
+
+        # 3. Other parameters use weighted average aggregation, result copied to each client
         if other_params:
-            logger.info(f"开始聚合 {len(other_params)} 个其他参数，使用加权平均")
+            logger.info(
+                f"Starting aggregation of {len(other_params)} other parameters using weighted average"
+            )
             for param_name in other_params:
                 param_tensors = [
                     params[param_name]
                     for params in client_params
                     if param_name in params
                 ]
-                if param_tensors:
-                    logger.debug(
-                        f"正在聚合参数 '{param_name}', 张量形状: {param_tensors[0].shape}"
-                    )
-                    # 使用加权平均聚合
-                    aggregated_param = self._weighted_average(param_tensors, weights)
-                    # 将聚合结果复制给每个客户端
-                    for i in range(num_clients):
-                        aggregated_client_params[i][
-                            param_name
-                        ] = aggregated_param.clone()
-            logger.info("加权平均聚合完成")
+
+                # Use weighted average aggregation
+                aggregated_param = self._weighted_average(param_tensors, weights)
+                # Copy aggregation result to each client
+                for client_id in client_ids:
+                    aggregated_client_params[client_id][
+                        param_name
+                    ] = aggregated_param.clone()
+            logger.info("Weighted average aggregation completed")
 
         logger.info(
-            f"FDSE聚合器聚合完成，为 {num_clients} 个客户端生成了个性化模型参数"
+            f"FDSE aggregator aggregation completed, generated personalized model parameters for {num_clients} clients"
         )
         return {"model_para_all": aggregated_client_params}
 
     def _is_non_trainable_param(self, param_name: str) -> bool:
-        """判断参数是否为不可训练参数"""
+        """Check if parameter is non-trainable"""
         non_trainable_keywords = [
             "running_mean",
             "running_var",
@@ -209,20 +214,22 @@ class FDSEAggregator(ClientsAvgAggregator):
         return any(keyword in param_lower for keyword in non_trainable_keywords)
 
     def _is_dfe_param(self, param_name: str) -> bool:
-        """判断参数是否属于DFE模块"""
+        """Check if parameter belongs to DFE module"""
         return "dfe.conv" in param_name.lower()
 
     def _is_dse_param(self, param_name: str) -> bool:
-        """判断参数是否属于DSE模块"""
+        """Check if parameter belongs to DSE module"""
         return "dse" in param_name.lower()
 
     def _simple_average(self, tensors: List[torch.Tensor]) -> torch.Tensor:
-        """简单平均聚合（不使用权重）"""
+        """Simple average aggregation (no weights)"""
         if not tensors:
-            logger.error("尝试对空张量列表进行简单平均")
+            logger.error("Attempting simple average on empty tensor list")
             raise ValueError("Empty tensor list")
 
-        logger.debug(f"执行简单平均聚合，张量数量: {len(tensors)}")
+        logger.debug(
+            f"Performing simple average aggregation, number of tensors: {len(tensors)}"
+        )
         result = torch.zeros_like(tensors[0])
         for tensor in tensors:
             result += tensor
@@ -232,13 +239,13 @@ class FDSEAggregator(ClientsAvgAggregator):
     def _weighted_average(
         self, tensors: List[torch.Tensor], weights: List[float]
     ) -> torch.Tensor:
-        """加权平均聚合"""
+        """Weighted average aggregation"""
         if not tensors:
-            logger.error("尝试对空张量列表进行加权平均")
+            logger.error("Attempting weighted average on empty tensor list")
             raise ValueError("Empty tensor list")
 
         logger.debug(
-            f"执行加权平均聚合，张量数量: {len(tensors)}, 权重: {[f'{w:.4f}' for w in weights]}"
+            f"Performing weighted average aggregation, number of tensors: {len(tensors)}, weights: {[f'{w:.4f}' for w in weights]}"
         )
         result = torch.zeros_like(tensors[0])
         for tensor, weight in zip(tensors, weights):
@@ -247,54 +254,54 @@ class FDSEAggregator(ClientsAvgAggregator):
 
     def _attention_aggregate(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
         """
-        使用缩放点积注意力机制聚合DSE参数，为每个客户端返回一个聚合结果
+        Use scaled dot-product attention mechanism to aggregate DSE parameters, returning an aggregated result for each client
 
         Args:
-            tensors: 客户端参数张量列表
+            tensors: List of client parameter tensors
 
         Returns:
-            每个客户端的聚合后参数张量列表
+            List of aggregated parameter tensors for each client
         """
         if not tensors:
-            logger.error("尝试对空张量列表进行注意力聚合")
+            logger.error("Attempting attention aggregation on empty tensor list")
             raise ValueError("Empty tensor list")
 
         if len(tensors) == 1:
-            logger.debug("只有一个张量，直接返回")
+            logger.debug("Only one tensor, returning directly")
             return [tensors[0]]
 
         original_shape = tensors[0].shape
         logger.debug(
-            f"注意力聚合开始，客户端数量: {len(tensors)}, 张量形状: {original_shape}"
+            f"Attention aggregation started, number of clients: {len(tensors)}, tensor shape: {original_shape}"
         )
 
         Q = torch.stack([tensor.flatten() for tensor in tensors])
         K = torch.stack([tensor.flatten() for tensor in tensors])
         V = torch.stack([tensor.flatten() for tensor in tensors])
 
-        # 使用缩放点积注意力计算注意力得分
-        d_k = Q.size(-1)  # 特征维度
+        # Use scaled dot-product attention to calculate attention scores
+        d_k = Q.size(-1)  # Feature dimension
         attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(
             torch.tensor(d_k, dtype=Q.dtype)
         )
-        logger.debug(f"计算注意力得分完成，特征维度: {d_k}")
+        logger.debug(f"Attention score calculation completed, feature dimension: {d_k}")
 
-        # 为每个客户端计算其专属的聚合结果
+        # Calculate personalized aggregation results for each client
         client_aggregated_results = []
         for i in range(len(tensors)):
-            # 第i个客户端的注意力权重（仅基于参数相似性）
+            # Attention weights for the i-th client (based on parameter similarity only)
             attn_weights = F.softmax(attention_scores[i], dim=0)
-            logger.debug(f"客户端 {i} 的注意力权重: {attn_weights.cpu().numpy()}")
+            logger.debug(f"Client {i} attention weights: {attn_weights.cpu().numpy()}")
 
-            # 基于注意力权重进行聚合
+            # Aggregate based on attention weights
             aggregated_feature = torch.sum(attn_weights.unsqueeze(1) * V, dim=0)
 
-            # 恢复原始形状并添加到结果列表
+            # Restore original shape and add to result list
             client_result = aggregated_feature.reshape(original_shape)
             client_aggregated_results.append(client_result)
 
         logger.debug(
-            f"注意力聚合完成，生成了 {len(client_aggregated_results)} 个客户端专属结果"
+            f"Attention aggregation completed, generated {len(client_aggregated_results)} client-specific results"
         )
         return client_aggregated_results
 
@@ -336,29 +343,20 @@ class FDSEAggregator(ClientsAvgAggregator):
         total_subgrad = torch.zeros_like(stacked_tensor)
         modes = range(1, p + 1)  # 处理所有模式（含二维张量的模式1和2）
 
-        logger.debug(f"计算张量子梯度，张量维度: {p}, 形状: {stacked_tensor.shape}")
-
         # 全局判断：如果整个张量接近零，直接返回零梯度
         if torch.allclose(stacked_tensor, torch.zeros_like(stacked_tensor), atol=1e-6):
-            logger.debug("张量接近零，返回零梯度")
             return total_subgrad
 
         for k in modes:
             unfolded = self._mode_unfold(stacked_tensor, k)
             nuc_norm = torch.linalg.norm(unfolded, ord="nuc")
-            logger.debug(f"模式 {k} 展开矩阵核范数: {nuc_norm:.6f}")
-
             if nuc_norm < 1e-4:  # 覆盖测试案例中的1.4e-5场景
-                logger.debug(f"模式 {k} 核范数过小，使用零梯度")
                 tensor_subgrad = torch.zeros_like(stacked_tensor)
             else:
                 # 正常矩阵使用SVD计算子梯度
                 u, s, vh = torch.linalg.svd(unfolded, full_matrices=False)
                 eps = 1e-6  # 防止数值不稳定
                 mask = s > eps  # 有效奇异值掩码
-                effective_rank = mask.sum().item()
-                logger.debug(f"模式 {k} 有效秩: {effective_rank}/{len(s)}")
-
                 u = u[:, mask]
                 vh = vh[mask, :]
                 mat_subgrad = u @ vh
@@ -376,34 +374,24 @@ class FDSEAggregator(ClientsAvgAggregator):
         对应公式：$\omega_i^{t+1} = \omega_i^t - \eta \left( \nabla \mathcal{L}_{\text{data}} + \lambda \frac{\partial \mathcal{L}_r}{\partial \omega_i} \right)$
         """
         num_clients = len(client_states)
-        logger.info(
-            f"FedSAK更新开始，客户端数量: {num_clients}, 正则化参数: {lambda_reg}"
-        )
-
         if num_clients == 0:
-            logger.warning("客户端状态为空，返回空列表")
             return []
 
         # 获取所有层名称（假设所有客户端的层结构一致）
         all_layers = client_states[0].keys()
         updated_states = [dict() for _ in range(num_clients)]
-        logger.info(f"待更新的层数量: {len(all_layers)}")
 
         # 遍历每个层（对应公式中的l=1..L）
-        for layer_idx, layer in enumerate(all_layers):
-            logger.debug(f"处理第 {layer_idx + 1}/{len(all_layers)} 层: {layer}")
-
+        for layer in all_layers:
             # 1. 堆叠所有客户端的层参数：$\mathcal{W}^l = \text{stack}(\omega_1^l, ..., \omega_M^l)$
             layer_tensors = []
             for i in range(num_clients):
                 # 增加客户端维度（最后一维，对应d_p=M）
                 layer_tensors.append(client_states[i][layer].unsqueeze(-1))
             stacked = torch.cat(layer_tensors, dim=-1)  # 形状: (d1, d2, ..., dp-1, M)
-            logger.debug(f"层 '{layer}' 堆叠张量形状: {stacked.shape}")
 
             # 计算更新前的张量迹范数
             trace_norm_before = self._compute_tensor_trace_norm(stacked)
-            logger.debug(f"层 '{layer}' 更新前张量迹范数: {trace_norm_before:.6f}")
 
             # 2. 计算层张量的子梯度：$\frac{\partial \|\mathcal{W}^l\|_*}{\partial \mathcal{W}^l}$
             layer_subgrad = self._compute_layer_subgradient(stacked)
@@ -424,12 +412,8 @@ class FDSEAggregator(ClientsAvgAggregator):
             # 重新堆叠更新后的参数以计算更新后的张量迹范数
             updated_stacked = torch.cat(updated_layer_tensors, dim=-1)
             trace_norm_after = self._compute_tensor_trace_norm(updated_stacked)
-            trace_norm_change = trace_norm_after - trace_norm_before
-
             logger.info(
-                f"层 '{layer}' FedSAK更新完成 - 迹范数: {trace_norm_before:.6f} → {trace_norm_after:.6f} "
-                f"(变化: {trace_norm_change:+.6f})"
+                f"Layer '{layer}' - Trace norm after update: {trace_norm_after:.6f} / before update: {trace_norm_before:.6f} / change: {trace_norm_after - trace_norm_before:.6f}"
             )
 
-        logger.info("FedSAK更新完成，所有层参数已更新")
         return updated_states

@@ -12,7 +12,7 @@ federate:
 
 fedprox:
   use: True
-  mu: 0.1
+  mu: 0.01
 
 data:
   root: data/office_caltech_10
@@ -20,14 +20,14 @@ data:
   consistent_label_distribution: True
   splitter: lda
   splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
-  splits: [0.6, 0, 0.4]
+  splits: [0.7, 0, 0.3]
   clients_per_domain: [5, 3, 1, 1]
 
 grad:
   grad_clip: 5.0
 
 dataloader:
-  batch_size: 32
+  batch_size: 64
 model:
   type: office_caltech_alexnet
   in_channels: 3
@@ -36,7 +36,7 @@ train:
   local_update_steps: 1
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.01
+    lr: 0.05
     weight_decay: 1e-4
 
 criterion:

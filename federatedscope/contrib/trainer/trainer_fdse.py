@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 
 
 class FDSETrainer(GeneralTorchTrainer):
+    def __init__(self, model, data, device, config, only_for_eval=False, monitor=None):
+        super().__init__(model, data, device, config, only_for_eval, monitor)
+        global_bn_statistics = self.ctx.model.get_bn_dfe_statistics()
+        self.ctx.custom_bn_statistics = {
+            name: {
+                "running_mean": torch.zeros_like(
+                    stat["running_mean"], device=device
+                ).requires_grad_(False),
+                "running_var": torch.ones_like(
+                    stat["running_var"], device=device
+                ).requires_grad_(False),
+            }
+            for name, stat in global_bn_statistics.items()
+        }
 
     def _param_filter(self, state_dict, filter_keywords=None):
         """
@@ -130,17 +144,17 @@ class FDSETrainer(GeneralTorchTrainer):
                 ctx.optimizer, **ctx.cfg[ctx.cur_mode].scheduler
             )
             ctx.global_bn_statistics = ctx.model.get_bn_dfe_statistics()
-            ctx.custom_bn_statistics = {
-                name: {
-                    "running_mean": torch.zeros_like(
-                        stat["running_mean"]
-                    ).requires_grad_(False),
-                    "running_var": torch.ones_like(stat["running_var"]).requires_grad_(
-                        False
-                    ),
-                }
-                for name, stat in ctx.global_bn_statistics.items()
-            }
+            # ctx.custom_bn_statistics = {
+            #     name: {
+            #         "running_mean": torch.zeros_like(
+            #             stat["running_mean"]
+            #         ).requires_grad_(False),
+            #         "running_var": torch.ones_like(stat["running_var"]).requires_grad_(
+            #             False
+            #         ),
+            #     }
+            #     for name, stat in ctx.global_bn_statistics.items()
+            # }
 
         # TODO: the number of batch and epoch is decided by the current mode
         #  and data split, so the number of batch and epoch should be
@@ -180,7 +194,7 @@ class FDSETrainer(GeneralTorchTrainer):
             dse_out = des_outputs[name]
             # 计算批次均值和方差
             batch_mean = dse_out.mean(dim=[0, 2, 3])
-            batch_var = dse_out.var(dim=[0, 2, 3])
+            batch_var = dse_out.var(dim=[0, 2, 3], unbiased=False)
             # 使用更平滑的更新规则
             local_running_mean = (
                 momentum * ctx.custom_bn_statistics[name]["running_mean"]

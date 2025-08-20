@@ -131,21 +131,6 @@ class FedSAKAggregator(Aggregator):
                             # 执行SVD分解
                             U, S, Vh = torch.linalg.svd(W, full_matrices=False)
 
-                            # 计算rank
-                            # threshold = 1e-4
-                            # rank_W = torch.sum(S > \
-                            # threshold).item()
-
-                            # 计算最小的奇异值
-                            # min_sigma = torch.min(S).item()
-
-                            # 打印日志
-                            # logger.info(f"[FedSAK] "
-                            #             f"rank={rank_W},
-                            #             f"minσ={min_sigma:.2e}, "
-                            #             f"Σ1={S[0]:.2e}, Σ2={S[1]:.2e},
-                            #             f"Σ3={S[2]:.2e}")
-
                             # 计算次梯度
                             grad = U @ Vh
                             # 更新参数

@@ -36,12 +36,14 @@ class DSE(nn.Module):
                 nn.Sequential(
                     nn.BatchNorm2d(1),  # 单通道BN（公式3中的BN_DSE）
                     nn.ReLU(inplace=False),
+                    # 替换为深度卷积：groups=1（与输入通道数一致），输出通道数=G
                     nn.Conv2d(
                         in_channels=1,
                         out_channels=G,
-                        kernel_size=1,  # 1x1卷积实现线性扩展
+                        kernel_size=(3, 3),
                         stride=1,
-                        padding=0,
+                        padding=1,
+                        groups=1,
                         bias=False,
                     ),
                 )
@@ -323,7 +325,7 @@ class FDSEModel(nn.Module):
 def model_builder(model_config, local_data):
     num_classes = model_config.out_channels
     resnet10_model = ResNet(BasicBlock, [1, 1, 1, 1], num_classes=num_classes)
-    return FDSEModel(resnet10_model, G=32)
+    return FDSEModel(resnet10_model, G=8)
 
 
 def call_fdse_alexnet(model_config, local_data):

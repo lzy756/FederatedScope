@@ -60,10 +60,6 @@ class FDSEServer(Server):
             **kwargs,
         )
 
-        # FedSAK specific parameters
-        self.agg_lmbda = config.aggregator.get("lambda_", 1e-3)
-        self.share_patterns = config.fedsak.share_patterns
-
         # Client selection tracking
         self.sample_client_ids = []
         self.prev_sample_client_ids = []
@@ -936,8 +932,14 @@ class FDSEClient(Client):
         self.state = message.state
 
         if message.content is not None:
+            logger.info(
+                f"################ {self.model.state_dict()['features.decomposed_layer_6.bn_dfe.running_mean'].norm()} / {message.content['features.decomposed_layer_6.bn_dfe.running_mean'].norm()}"
+            )
             self.trainer.update(
                 message.content, strict=self._cfg.federate.share_local_model
+            )
+            logger.info(
+                f"###############{self.model.state_dict()['features.decomposed_layer_6.bn_dfe.running_mean'].norm()} / {message.content['features.decomposed_layer_6.bn_dfe.running_mean'].norm()}"
             )
 
         if self.early_stopper.early_stopped and self._cfg.federate.method in [
