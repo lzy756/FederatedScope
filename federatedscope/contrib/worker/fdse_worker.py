@@ -62,7 +62,6 @@ class FDSEServer(Server):
 
         # Client selection tracking
         self.sample_client_ids = []
-        self.prev_sample_client_ids = []
 
         # Data distribution related
         self.peer_communities = None
@@ -76,8 +75,8 @@ class FDSEServer(Server):
         self.h_vector = None
 
         # Template solving parameters
-        self.S = config.federate.get("sample_client_num", 25)
-        self.n_batch_size = config.dataloader.get("batch_size", 32)
+        self.S = config.federate.sample_client_num
+        self.n_batch_size = config.dataloader.batch_size
         self.A_matrix = None
         self.M_vector = None
         self.B_vector = None
@@ -176,12 +175,16 @@ class FDSEServer(Server):
     ):
         """Broadcast model parameters with optimized client selection"""
         # Handle evaluation requests
+        receiver = list(self.comm_manager.neighbors.keys())
         if msg_type == "evaluate":
-            receiver = list(self.comm_manager.neighbors.keys())
             for rcv_idx in receiver:
                 content = None
-                if rcv_idx in self.personalized_slices:
+                if self.state == 0:
+                    content = self.model.state_dict()
+                elif rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]
+                else:
+                    content = self._get_common_params()
                 self.comm_manager.send(
                     Message(
                         msg_type=msg_type,
@@ -193,21 +196,24 @@ class FDSEServer(Server):
                 )
             return
 
-        # Send updates to previous round participants
-        if self.prev_sample_client_ids:
-            for cid in self.prev_sample_client_ids:
-                if cid in self.personalized_slices:
-                    logger.debug(f"Send personalized slice to C{cid}")
-                    self.comm_manager.send(
-                        Message(
-                            msg_type="update_model",
-                            sender=self.ID,
-                            receiver=[cid],
-                            state=self.state,
-                            content=self.personalized_slices[cid],
-                        )
-                    )
-            self.prev_sample_client_ids = []
+        # Send updates to participants
+        for rcv_idx in receiver:
+            content = None
+            if self.state == 0:
+                content = self.model.state_dict()
+            elif rcv_idx in self.personalized_slices:
+                content = self.personalized_slices[rcv_idx]
+            else:
+                content = self._get_common_params()
+            self.comm_manager.send(
+                Message(
+                    msg_type="update_model",
+                    sender=self.ID,
+                    receiver=[rcv_idx],
+                    state=self.state,
+                    content=content,
+                )
+            )
 
         # Select clients for new round
         if self.S > 0:
@@ -225,22 +231,13 @@ class FDSEServer(Server):
 
         # Broadcast training messages
         for rcv_idx in receiver:
-            if self.state == 0 or not hasattr(self, "personalized_slices"):
-                content = self.model.state_dict()
-                msg_type_to_send = "model_para"
-            else:
-                content = None
-                if rcv_idx in self.personalized_slices:
-                    content = self.personalized_slices[rcv_idx]
-                msg_type_to_send = "trigger_train"
-
             self.comm_manager.send(
                 Message(
-                    msg_type=msg_type_to_send,
+                    msg_type="trigger_train",
                     sender=self.ID,
                     receiver=[rcv_idx],
                     state=self.state,
-                    content=content,
+                    content=None,
                 )
             )
 
@@ -274,9 +271,6 @@ class FDSEServer(Server):
         # Save personalized slices for next round
         if "model_para_all" in result:
             self.personalized_slices = result["model_para_all"]
-
-        # Update client tracking
-        self.prev_sample_client_ids = self.sample_client_ids.copy()
 
         # Clean up and advance state
         self.msg_buffer["train"][round].clear()
@@ -779,6 +773,20 @@ class FDSEServer(Server):
 
         return distribution
 
+    def _get_common_params(self):
+        param_names = list(self.model.state_dict().keys())
+        common_param_names = []
+
+        def _is_dse_param(param_name: str) -> bool:
+            """Check if parameter belongs to DSE module"""
+            return "dse" in param_name.lower()
+
+        for param_name in param_names:
+            if _is_dse_param(param_name):
+                continue
+            common_param_names.append(param_name)
+        return {name: self.model.state_dict()[name] for name in common_param_names}
+
 
 class FDSEClient(Client):
     def __init__(
@@ -839,9 +847,8 @@ class FDSEClient(Client):
         round, sender, payload = message.state, message.sender, message.content
 
         # Update shared layers only
-        cur = self.model.state_dict()
-        cur.update(payload)
-        self.model.load_state_dict(cur, strict=False)
+        if payload is not None:
+            self.trainer.update(payload, strict=self._cfg.federate.share_local_model)
 
         # Update round state
         self.state = round
@@ -878,10 +885,7 @@ class FDSEClient(Client):
         round, sender, payload = message.state, message.sender, message.content
 
         if payload is not None:
-            # Update shared layers
-            cur = self.model.state_dict()
-            cur.update(payload)
-            self.model.load_state_dict(cur, strict=False)
+            self.trainer.update(payload, strict=self._cfg.federate.share_local_model)
 
         # Update round state
         self.state = round
@@ -893,9 +897,7 @@ class FDSEClient(Client):
 
         # Update model if server sent parameters
         if payload is not None:
-            cur = self.model.state_dict()
-            cur.update(payload)
-            self.model.load_state_dict(cur, strict=False)
+            self.trainer.update(payload, strict=self._cfg.federate.share_local_model)
 
         # Update round state
         self.state = round
@@ -932,14 +934,8 @@ class FDSEClient(Client):
         self.state = message.state
 
         if message.content is not None:
-            logger.info(
-                f"################ {self.model.state_dict()['features.decomposed_layer_6.bn_dfe.running_mean'].norm()} / {message.content['features.decomposed_layer_6.bn_dfe.running_mean'].norm()}"
-            )
             self.trainer.update(
                 message.content, strict=self._cfg.federate.share_local_model
-            )
-            logger.info(
-                f"###############{self.model.state_dict()['features.decomposed_layer_6.bn_dfe.running_mean'].norm()} / {message.content['features.decomposed_layer_6.bn_dfe.running_mean'].norm()}"
             )
 
         if self.early_stopper.early_stopped and self._cfg.federate.method in [

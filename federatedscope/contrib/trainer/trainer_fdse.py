@@ -90,9 +90,9 @@ class FDSETrainer(GeneralTorchTrainer):
                     continue
 
             filtered_model_para[name] = param
-        logger.info(
-            f"model param before: {len(model_para)}, after: {len(filtered_model_para)}, removed: {len(model_para) - len(filtered_model_para)}"
-        )
+        # logger.info(
+        #     f"model param before: {len(model_para)}, after: {len(filtered_model_para)}, removed: {len(model_para) - len(filtered_model_para)}"
+        # )
         return filtered_model_para
 
     def register_default_hooks_train(self):

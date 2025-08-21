@@ -86,7 +86,7 @@ class FDSEAggregator(ClientsAvgAggregator):
 
         # Initialize aggregation results for each client
         aggregated_client_params = {client_id: {} for client_id in client_ids}
-
+        common_params = {}
         # 0. Non-trainable parameters (e.g., running_mean, running_var) use simple average aggregation, distribute to all clients
         if non_trainable_params:
             logger.info(
@@ -104,6 +104,7 @@ class FDSEAggregator(ClientsAvgAggregator):
                 )
                 # Use simple average aggregation (no sample weights)
                 aggregated_param = self._simple_average(param_tensors)
+                common_params[param_name] = aggregated_param.clone()
                 # Copy aggregation result to each client
                 for client_id in client_ids:
                     aggregated_client_params[client_id][
@@ -111,10 +112,10 @@ class FDSEAggregator(ClientsAvgAggregator):
                     ] = aggregated_param.clone()
             logger.info("Non-trainable parameter simple average aggregation completed")
 
-        # 1. DFE module uses FedSAK aggregation
+        # 1. DFE module uses weighted average aggregation, result copied to each client
         if dfe_params:
             logger.info(
-                f"Starting aggregation of {len(dfe_params)} DFE parameters using FedSAK aggregation"
+                f"Starting aggregation of {len(dfe_params)} DFE parameters using weighted average aggregation"
             )
             for param_name in dfe_params:
                 param_tensors = [
@@ -125,33 +126,13 @@ class FDSEAggregator(ClientsAvgAggregator):
 
                 # Use weighted average aggregation
                 aggregated_param = self._weighted_average(param_tensors, weights)
+                common_params[param_name] = aggregated_param.clone()
                 # Copy aggregation result to each client
                 for client_id in client_ids:
                     aggregated_client_params[client_id][
                         param_name
                     ] = aggregated_param.clone()
             logger.info("Weighted average aggregation completed")
-            # Extract DFE parameters for all clients
-            # dfe_client_states = []
-            # for params in client_params:
-            #     dfe_state = {
-            #         param_name: params[param_name]
-            #         for param_name in dfe_params
-            #         if param_name in params
-            #     }
-            #     dfe_client_states.append(dfe_state)
-
-            # # Apply FedSAK aggregation
-            # updated_dfe_states = self._fedsak_update(dfe_client_states, lambda_reg=0.01)
-
-            # # Assign updated DFE parameters to each client
-            # for i, client_id in enumerate(client_ids):
-            #     for param_name in dfe_params:
-            #         if param_name in updated_dfe_states[i]:
-            #             aggregated_client_params[client_id][param_name] = (
-            #                 updated_dfe_states[i][param_name]
-            #             )
-            # logger.info("DFE parameter FedSAK aggregation completed")
 
         # 2. DSE module uses attention mechanism aggregation, each client gets personalized result
         if dse_params:
@@ -188,6 +169,7 @@ class FDSEAggregator(ClientsAvgAggregator):
 
                 # Use weighted average aggregation
                 aggregated_param = self._weighted_average(param_tensors, weights)
+                common_params[param_name] = aggregated_param.clone()
                 # Copy aggregation result to each client
                 for client_id in client_ids:
                     aggregated_client_params[client_id][
@@ -195,9 +177,7 @@ class FDSEAggregator(ClientsAvgAggregator):
                     ] = aggregated_param.clone()
             logger.info("Weighted average aggregation completed")
 
-        logger.info(
-            f"FDSE aggregator aggregation completed, generated personalized model parameters for {num_clients} clients"
-        )
+        self.model.load_state_dict(common_params, strict=False)
         return {"model_para_all": aggregated_client_params}
 
     def _is_non_trainable_param(self, param_name: str) -> bool:
@@ -215,7 +195,7 @@ class FDSEAggregator(ClientsAvgAggregator):
 
     def _is_dfe_param(self, param_name: str) -> bool:
         """Check if parameter belongs to DFE module"""
-        return "dfe.conv" in param_name.lower()
+        return "dfe" in param_name.lower()
 
     def _is_dse_param(self, param_name: str) -> bool:
         """Check if parameter belongs to DSE module"""

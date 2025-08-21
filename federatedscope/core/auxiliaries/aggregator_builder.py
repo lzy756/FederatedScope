@@ -140,7 +140,7 @@ def get_aggregator(method, model=None, device=None, online=False, config=None):
     elif aggregator_type == "mgda":
         return MGDAAggregator(config=config)
     elif aggregator_type == "fdse":
-        return FDSEAggregator(config=config)
+        return FDSEAggregator(config=config, model=model, device=device)
     else:
         raise NotImplementedError(
             "Aggregator {} is not implemented.".format(aggregator_type)

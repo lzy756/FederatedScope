@@ -185,7 +185,7 @@ def model_builder(model_config, local_data):
     num_classes = model_config.out_channels
     drop_out = 0.5
     alexnet_model = AlexNet(num_classes=num_classes, dropout=drop_out)
-    return FDSEModel(alexnet_model, G=1)
+    return FDSEModel(alexnet_model, G=2)
 
 
 def call_fdse_alexnet(model_config, local_data):
