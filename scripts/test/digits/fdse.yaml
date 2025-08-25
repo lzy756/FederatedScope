@@ -8,7 +8,7 @@ federate:
   total_round_num: 500
   client_num: 200
   sample_client_num: 50
-  method: ditto
+  method: fdse
 data:
   root: data/
   type: digits
@@ -18,10 +18,10 @@ data:
 dataloader:
   batch_size: 64
 model:
-  type: cross_domain_digit_cnn
+  type: fdse_cnn
   in_channels: 3
   out_channels: 10
-  use_bn: True
+  use_bn: True # 模型中是否添加BN层，默认为False
 train:
   local_update_steps: 1
   batch_or_epoch: epoch
@@ -37,8 +37,9 @@ eval:
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
 trainer:
-  type: cvtrainer
+  type: fdsetrainer
+aggregator:
+  lambda_: 0.1 # 控制FedSAK的权重，为0时返回模型的平均值
 personalization:
-  local_update_steps: 1 # Ditto 本地迭代步数
-  lr: 0.001 # 本地个性化模型学习率（与 train.optimizer.lr ⼀致）
-  regular_weight: 10 # 本地模型相对全局模型的正则系数
+  local_param: ['num_batches_tracked']
+  share_non_trainable_para: True

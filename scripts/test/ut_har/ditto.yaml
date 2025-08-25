@@ -38,4 +38,4 @@ eval:
 personalization:
   local_update_steps: 10 # Ditto 本地迭代步数
   lr: 0.0005 # 本地个性化模型学习率（与 train.optimizer.lr ⼀致）
-  regular_weight: 0.05 # 本地模型相对全局模型的正则系数
+  regular_weight: 100 # 本地模型相对全局模型的正则系数
