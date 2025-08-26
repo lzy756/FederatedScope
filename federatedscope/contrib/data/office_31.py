@@ -28,7 +28,7 @@ class OfficeFullImages:
         logger.info(f"Loading all data for domain '{domain_name}'")
 
         # Build the path to the Office Caltech dataset
-        dataset_path = os.path.join(self.root, "office_caltech_10", self.domain_name)
+        dataset_path = os.path.join(self.root, "Office-31", self.domain_name)
         if not os.path.exists(dataset_path):
             # Fallback to direct domain name path
             dataset_path = os.path.join(self.root, self.domain_name)
@@ -217,7 +217,6 @@ def _create_federated_data_dict(
     test_dataset,
     domain_name,
     client_num,
-    val_dataset=None,
 ):
     """
     Create federated data dictionary for a single domain dataset
@@ -228,8 +227,6 @@ def _create_federated_data_dict(
         train_dataset: Training dataset
         test_dataset: Test dataset
         domain_name: Name of the domain for logging
-        client_num: Number of clients for this domain
-        val_dataset: Validation dataset (optional)
 
     Returns:
         dict: Federated data dictionary with client_num clients
@@ -241,84 +238,14 @@ def _create_federated_data_dict(
     # Use BaseDataTranslator to convert to federated format
     translator = BaseDataTranslator(tmp_config, client_cfgs)
 
-    # Create dataset tuple (train, val, test)
-    if val_dataset is None:
-        val_dataset = []
-    split_datasets = (train_dataset, val_dataset, test_dataset)
+    # Create dataset tuple (train, val, test) - using test for both val and test
+    split_datasets = (train_dataset, [], test_dataset)
     data_dict = translator(split_datasets)
 
     logger.info(
         f"Successfully created federated {domain_name} dataset with {len(data_dict) - 1} clients"
     )
     return data_dict
-
-
-def _create_cross_domain_validation_sets(all_domain_datasets, val_ratio=0.5):
-    """
-    Create cross-domain validation sets for each domain.
-    Each domain's validation set contains samples from other domains.
-
-    Args:
-        all_domain_datasets: Dictionary mapping domain names to their datasets
-        val_ratio: Ratio of samples to use for validation from other domains
-
-    Returns:
-        dict: Dictionary mapping domain names to their cross-domain validation datasets
-    """
-    domain_names = list(all_domain_datasets.keys())
-    cross_domain_val_sets = {}
-
-    for target_domain in domain_names:
-        # Collect validation samples from all other domains
-        other_domain_samples = []
-
-        for source_domain in domain_names:
-            if source_domain != target_domain:
-                source_train_dataset = all_domain_datasets[source_domain]["train"]
-                source_all_data = source_train_dataset.all_data
-
-                # Group data by class for stratified sampling
-                class_data = {}
-                for i, (_, label) in enumerate(source_all_data):
-                    if label not in class_data:
-                        class_data[label] = []
-                    class_data[label].append(i)
-
-                # Sample validation data from each class
-                for class_label, indices in class_data.items():
-                    class_indices = np.array(indices)
-                    np.random.shuffle(class_indices)
-
-                    # Take val_ratio of samples from this class
-                    val_size = max(1, int(len(class_indices) * val_ratio))
-                    val_indices = class_indices[:val_size]
-
-                    # Add selected samples to validation set
-                    for idx in val_indices:
-                        other_domain_samples.append(source_all_data[idx])
-
-        # Create validation dataset from collected samples
-        if other_domain_samples:
-            val_dataset = OfficeDataset(
-                data_list=other_domain_samples,
-                class_to_idx=all_domain_datasets[target_domain]["train"].class_to_idx,
-                classes=all_domain_datasets[target_domain]["train"].classes,
-                num_classes=all_domain_datasets[target_domain]["train"].num_classes,
-                transform=all_domain_datasets[target_domain][
-                    "test"
-                ].transform,  # Use test transform for validation
-            )
-            cross_domain_val_sets[target_domain] = val_dataset
-            logger.info(
-                f"Created cross-domain validation set for {target_domain}: {len(val_dataset)} samples"
-            )
-        else:
-            cross_domain_val_sets[target_domain] = None
-            logger.warning(
-                f"No cross-domain validation samples created for {target_domain}"
-            )
-
-    return cross_domain_val_sets
 
 
 def _merge_data_dictionaries(config, data_dicts):
@@ -344,19 +271,7 @@ def _merge_data_dictionaries(config, data_dicts):
 
     # Merge server data (ID=0)
     server_train = ConcatDataset([data_dict[0].train_data for data_dict in data_dicts])
-    # For server validation, concatenate all client validation sets if they exist
-    server_val_datasets = []
-    for data_dict in data_dicts:
-        if (
-            hasattr(data_dict[0], "val_data")
-            and data_dict[0].val_data is not None
-            and len(data_dict[0].val_data) > 0
-        ):
-            server_val_datasets.append(data_dict[0].val_data)
-    server_val = (
-        ConcatDataset(server_val_datasets) if server_val_datasets else ConcatDataset([])
-    )
-
+    server_val = ConcatDataset([data_dict[0].val_data for data_dict in data_dicts])
     server_test = ConcatDataset([data_dict[0].test_data for data_dict in data_dicts])
     merged_data_dict[0] = ClientData(
         tmp_config_merged, train=server_train, val=server_val, test=server_test
@@ -378,7 +293,7 @@ def _merge_data_dictionaries(config, data_dicts):
             cnt += 1
 
     logger.info(f"Merged data dictionary created with {len(merged_data_dict)} clients")
-    # Log the size of training, validation and test sets for each client
+    # Log the size of training and test sets for each client
     for client_id, client_data in merged_data_dict.items():
         train_size = len(client_data.train_data) if client_data.train_data else 0
         val_size = len(client_data.val_data) if client_data.val_data else 0
@@ -450,9 +365,9 @@ def _perform_clustering_analysis(data_dict, data_root, num_classes):
         )
 
 
-def load_office_caltech_dataset(config, client_cfgs=None):
+def load_office_31_dataset(config, client_cfgs=None):
     """
-    Load Office Caltech dataset for federated learning.
+    Load Office 31 dataset for federated learning.
 
     Args:
         config: Configuration object containing data settings
@@ -487,34 +402,26 @@ def load_office_caltech_dataset(config, client_cfgs=None):
         ]
     )
 
-    # Load all domain datasets first
-    domain_names = ["caltech", "amazon", "webcam", "dslr"]
+    # Load all domain datasets
+    domain_names = ["amazon", "webcam", "dslr"]
     clients_per_domain = config.data.clients_per_domain
+
+    if len(clients_per_domain) != len(domain_names):
+        raise ValueError(
+            "Number of clients per domain must match number of domain names"
+        )
+
     train_ratio = config.data.splits[0]
 
-    # Step 1: Load all domain datasets
-    all_domain_datasets = {}
-    for domain_name in domain_names:
+    data_dicts = []
+
+    for domain_name, client_num in zip(domain_names, clients_per_domain):
+        # Load domain dataset
         train_dataset, test_dataset = _load_domain_dataset(
             domain_name, data_root, transform_train, transform_test, train_ratio
         )
-        all_domain_datasets[domain_name] = {
-            "train": train_dataset,
-            "test": test_dataset,
-        }
 
-    # Step 2: Create cross-domain validation sets
-    logger.info("Creating cross-domain validation sets...")
-    cross_domain_val_sets = _create_cross_domain_validation_sets(all_domain_datasets)
-
-    # Step 3: Create federated data dictionaries with cross-domain validation
-    data_dicts = []
-    for domain_name, client_num in zip(domain_names, clients_per_domain):
-        train_dataset = all_domain_datasets[domain_name]["train"]
-        test_dataset = all_domain_datasets[domain_name]["test"]
-        val_dataset = cross_domain_val_sets[domain_name]
-
-        # Create federated data dictionary for this domain with cross-domain validation
+        # Create federated data dictionary for this domain
         data_dict = _create_federated_data_dict(
             config,
             client_cfgs,
@@ -522,7 +429,6 @@ def load_office_caltech_dataset(config, client_cfgs=None):
             test_dataset,
             domain_name,
             client_num,
-            val_dataset,
         )
         data_dicts.append(data_dict)
 
@@ -535,9 +441,9 @@ def load_office_caltech_dataset(config, client_cfgs=None):
     return merged_data_dict, config
 
 
-def call_office_caltech_data(config, client_cfgs=None):
+def call_office_31_data(config, client_cfgs=None):
     """
-    Entry point for Office Caltech dataset registration.
+    Entry point for Office 31 dataset registration.
 
     Args:
         config: Configuration object
@@ -546,11 +452,11 @@ def call_office_caltech_data(config, client_cfgs=None):
     Returns:
         tuple: (datadict, config) if dataset type matches, None otherwise
     """
-    if config.data.type.lower() == "office_caltech":
-        logger.info("Loading Office Caltech dataset...")
-        return load_office_caltech_dataset(config, client_cfgs)
+    if config.data.type.lower() == "office_31":
+        logger.info("Loading Office 31 dataset...")
+        return load_office_31_dataset(config, client_cfgs)
     return None
 
 
-# Register the Office Caltech dataset
-register_data("office_caltech", call_office_caltech_data)
+# Register the Office 31 dataset
+register_data("office_31", call_office_31_data)

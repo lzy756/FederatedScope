@@ -15,8 +15,8 @@ data:
   type: office_caltech
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
-  splits: [0.7, 0, 0.3]
+  splitter_args: [{'alpha': 0.1}] # 控制域内数据分布的参数
+  splits: [0.4, 0, 0.6]
   clients_per_domain: [5, 3, 1, 1]
 
 dataloader:
@@ -45,11 +45,6 @@ eval:
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
   split: ['test']
-
-# personalization:
-#   local_update_steps: 10
-#   lr: 0.1
-#   regular_weight: 0.1
 
 
 

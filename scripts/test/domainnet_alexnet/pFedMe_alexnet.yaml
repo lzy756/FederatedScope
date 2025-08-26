@@ -30,7 +30,7 @@ train:
   local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.01
+    lr: 0.05
     weight_decay: 1e-4
 
 criterion:
@@ -45,8 +45,8 @@ eval:
 
 personalization:
   K: 5
-  lr: 0.1
-  regular_weight: 1.0
+  lr: 0.01
+  regular_weight: 15
 
 grad:
   grad_clip: 5.0

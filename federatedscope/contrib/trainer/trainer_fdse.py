@@ -90,9 +90,6 @@ class FDSETrainer(GeneralTorchTrainer):
                     continue
 
             filtered_model_para[name] = param
-        # logger.info(
-        #     f"model param before: {len(model_para)}, after: {len(filtered_model_para)}, removed: {len(model_para) - len(filtered_model_para)}"
-        # )
         return filtered_model_para
 
     def register_default_hooks_train(self):
@@ -144,17 +141,6 @@ class FDSETrainer(GeneralTorchTrainer):
                 ctx.optimizer, **ctx.cfg[ctx.cur_mode].scheduler
             )
             ctx.global_bn_statistics = ctx.model.get_bn_dfe_statistics()
-            # ctx.custom_bn_statistics = {
-            #     name: {
-            #         "running_mean": torch.zeros_like(
-            #             stat["running_mean"]
-            #         ).requires_grad_(False),
-            #         "running_var": torch.ones_like(stat["running_var"]).requires_grad_(
-            #             False
-            #         ),
-            #     }
-            #     for name, stat in ctx.global_bn_statistics.items()
-            # }
 
         # TODO: the number of batch and epoch is decided by the current mode
         #  and data split, so the number of batch and epoch should be
@@ -223,7 +209,7 @@ class FDSETrainer(GeneralTorchTrainer):
             # 计算当前层的一致性损失
             layer_loss_con = mean_loss + var_loss
             logger.info(
-                f"Layer: {name}, Consistency Loss: {layer_loss_con.item()}, mean loss: {mean_loss.item()}, var loss: {var_loss.item()}"
+                f"Layer: {name}, running mean: {local_running_mean.detach().norm().item()}/{global_running_mean.detach().norm().item()}, running var: {local_running_var.detach().norm().item()}/{global_running_var.detach().norm().item()}"
             )
             # 限制损失值防止数值爆炸
             layer_loss_con = torch.clamp(layer_loss_con, max=max_loss_value)

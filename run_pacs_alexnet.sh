@@ -29,19 +29,19 @@ if [[ $1 == "-h" ]] || [[ $1 == "--help" ]]; then
 fi
 
 # 定义要执行的命令数组
-commands[1]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/FedBN_alexnet.yaml"
-commands[2]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fdse_alexnet.yaml"
-commands[3]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedavg_alexnet.yaml"
-commands[4]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/fedprox_alexnet.yaml"
-commands[5]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/local_alexnet.yaml"
-commands[6]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/pFedMe_alexnet.yaml"
-commands[7]="python federatedscope/main.py --cfg ./scripts/test/office_caltech_alexnet/ditto_alexnet.yaml"
+commands[1]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/fdse_pacs.yaml"
+commands[2]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/fedavg_pacs.yaml"
+commands[3]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/fedprox_pacs.yaml"
+commands[4]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/FedBN_pacs.yaml"
+commands[5]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/local_pacs.yaml"
+commands[6]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/pFedMe_pacs.yaml"
+commands[7]="python federatedscope/main.py --cfg ./scripts/test/pacs_alexnet/ditto_pacs.yaml"
 
 # 定义任务名称数组
-task_names[1]="FedBN"
-task_names[2]="fdse"
-task_names[3]="fedavg"
-task_names[4]="fedprox"
+task_names[1]="fdse"
+task_names[2]="fedavg"
+task_names[3]="fedprox"
+task_names[4]="FedBN"
 task_names[5]="local"
 task_names[6]="PFedMe"
 task_names[7]="ditto"
@@ -66,7 +66,7 @@ if [[ ! $max_windows =~ ^[0-9]+$ ]] || [[ $max_windows -lt 1 ]]; then
 fi
 
 # tmux 会话名称
-session_name="federated_exp_office_caltech_alexnet"
+session_name="federated_exp_pacs_alexnet"
 
 # 检查 tmux 是否已安装
 if ! command -v tmux &> /dev/null; then
@@ -186,7 +186,7 @@ echo "  Ctrl+b, w    # 列出所有窗口"
 echo "  Ctrl+b, d    # 从会话中分离 (detach)"
 echo ""
 
-# 自动连接到会话 (可选)
+# # 自动连接到会话 (可选)
 # read -q "REPLY?是否要立即连接到 tmux 会话? (y/n): "
 # echo
 # if [[ $REPLY =~ ^[Yy]$ ]]; then

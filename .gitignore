@@ -156,3 +156,6 @@ papers/NeurIPS-2023-federated-multi-objective-learning-Paper-Conference.pdf
 
 
 pretrained_models/
+exp_saved/
+model_parameters_comparison.txt
+result.pdf

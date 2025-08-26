@@ -83,7 +83,12 @@ class FDSEAggregator(ClientsAvgAggregator):
         logger.info(f"DFE parameters: {dfe_params}")
         logger.info(f"DSE parameters: {dse_params[:10]}")
         logger.info(f"Other parameters: {other_params}")
-
+        common_param_names = dfe_params + other_params
+        base_common_params = {
+            name: self.model.state_dict()[name]
+            for name in common_param_names
+            if name in self.model.state_dict()
+        }
         # Initialize aggregation results for each client
         aggregated_client_params = {client_id: {} for client_id in client_ids}
         common_params = {}
@@ -119,13 +124,39 @@ class FDSEAggregator(ClientsAvgAggregator):
             )
             for param_name in dfe_params:
                 param_tensors = [
-                    params[param_name]
+                    params[param_name] - base_common_params[param_name]
                     for params in client_params
                     if param_name in params
                 ]
 
+                # Calculate and log cosine distances between client parameters
+                if len(param_tensors) > 1:
+                    logger.info(
+                        f"Computing cosine distances for parameter '{param_name}'"
+                    )
+                    for i in range(len(param_tensors)):
+                        for j in range(i + 1, len(param_tensors)):
+                            # Flatten tensors for cosine similarity calculation
+                            tensor_i = param_tensors[i].flatten()
+                            tensor_j = param_tensors[j].flatten()
+
+                            # Calculate cosine similarity
+                            cosine_sim = F.cosine_similarity(
+                                tensor_i.unsqueeze(0), tensor_j.unsqueeze(0)
+                            )
+                            cosine_distance = 1 - cosine_sim.item()
+
+                            logger.info(
+                                f"Param name: {param_name} Client {client_ids[i]} vs Client {client_ids[j]}: "
+                                f"cosine similarity = {cosine_sim.item():.6f}, "
+                                f"cosine distance = {cosine_distance:.6f}"
+                            )
+
                 # Use weighted average aggregation
-                aggregated_param = self._weighted_average(param_tensors, weights)
+                aggregated_param = (
+                    self._weighted_average(param_tensors, weights)
+                    + base_common_params[param_name]
+                )
                 common_params[param_name] = aggregated_param.clone()
                 # Copy aggregation result to each client
                 for client_id in client_ids:
@@ -162,13 +193,33 @@ class FDSEAggregator(ClientsAvgAggregator):
             )
             for param_name in other_params:
                 param_tensors = [
-                    params[param_name]
+                    params[param_name] - base_common_params[param_name]
                     for params in client_params
                     if param_name in params
                 ]
+                # Calculate and log cosine distances between client parameters
+                for i in range(len(client_ids)):
+                    for j in range(i + 1, len(client_ids)):
+                        tensor_i = param_tensors[i].flatten()
+                        tensor_j = param_tensors[j].flatten()
+
+                        # Calculate cosine similarity
+                        cosine_sim = F.cosine_similarity(
+                            tensor_i.unsqueeze(0), tensor_j.unsqueeze(0)
+                        )
+                        cosine_distance = 1 - cosine_sim.item()
+
+                        logger.info(
+                            f"Param name: {param_name} Client {client_ids[i]} vs Client {client_ids[j]}: "
+                            f"cosine similarity = {cosine_sim.item():.6f}, "
+                            f"cosine distance = {cosine_distance:.6f}"
+                        )
 
                 # Use weighted average aggregation
-                aggregated_param = self._weighted_average(param_tensors, weights)
+                aggregated_param = (
+                    self._weighted_average(param_tensors, weights)
+                    + base_common_params[param_name]
+                )
                 common_params[param_name] = aggregated_param.clone()
                 # Copy aggregation result to each client
                 for client_id in client_ids:
