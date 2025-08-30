@@ -1,0 +1,59 @@
+use_gpu: True
+device: 0
+expname_tag: Office31_ViT_fedsak_lda
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  client_num: 9
+  method: fedsak
+  mode: standalone
+  total_round_num: 50
+  sample_client_rate: 1.0
+data:
+  splitter: office31_domain_dirichlet
+  # splitter_args: [{'alpha': 0.01}]
+  # splitter_args: [{'client_num': 200}]
+  type: Office31
+  # splits: [0.6,0.2,0.2]
+  # subsample: 0.05
+  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.485, 0.456, 0.406], 'std': [0.229, 0.224, 0.225]}]]
+aggregator:
+  lambda_: 2
+  lr_shared: 0.05
+  filter_keys:                 # 与 ViT.py 中的 unfreeze_keys 完全对齐
+  - embeddings.position
+  - encoder.layer.9
+  - encoder.layer.10
+  - encoder.layer.11
+  # - layernorm               # 可选：加 LN
+  - classifier
+trainer:
+  type: fedsak
+fedsak:                 # ← 额外可选配置
+  share_patterns:
+    - embeddings.position
+    - encoder.layer.9
+    - encoder.layer.10
+    - encoder.layer.11
+    - classifier
+dataloader:
+  batch_size: 32
+model:
+  type: ViT
+  out_channels: 31
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 2e-4 
+    weight_decay: 0.01 
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+eval:
+  freq: 2
+  metrics: ['acc', 'correct']
+  count_flops: False
