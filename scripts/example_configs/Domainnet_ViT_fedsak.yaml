@@ -41,7 +41,7 @@ dataloader:
   batch_size: 32
 model:
   type: ViT
-  out_channels: 345
+  out_channels: 100
 train:
   local_update_steps: 1
   batch_or_epoch: epoch

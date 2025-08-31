@@ -41,26 +41,28 @@ class DomainnetDataset(Dataset):
         domains.sort()
         self.domain_names = domains
 
-        # 收集所有类名（跨域去重，确保共享 label 空间）
-        class_names_set = set()
+        domain_to_selected = {}
+        selected_class_names = set()
         for d in domains:
             dpath = os.path.join(root_dir, d)
-            for cls in os.listdir(dpath):
-                if os.path.isdir(os.path.join(dpath, cls)):
-                    class_names_set.add(cls)
-        self.idx_to_class = sorted(class_names_set)
+            class_names = [
+                cls for cls in os.listdir(dpath)
+                if os.path.isdir(os.path.join(dpath, cls))
+            ]
+            class_names.sort()
+            picked = class_names[:100]
+            domain_to_selected[d] = set(picked)
+            selected_class_names.update(picked)
+        self.idx_to_class = sorted(selected_class_names)
         self.class_to_idx = {c: i for i, c in enumerate(self.idx_to_class)}
 
         # 逐域逐类收集样本
         valid_ext = ('.jpg', '.jpeg', '.png', '.bmp')
         for dom_id, d in enumerate(domains):
             dpath = os.path.join(root_dir, d)
-            for cls in os.listdir(dpath):
+            for cls in sorted(domain_to_selected.get(d, [])):
                 cdir = os.path.join(dpath, cls)
                 if not os.path.isdir(cdir):
-                    continue
-                if cls not in self.class_to_idx:
-                    # 理论上不会发生，已全局收集
                     continue
                 cls_idx = self.class_to_idx[cls]
                 files = [

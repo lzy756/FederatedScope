@@ -1,0 +1,39 @@
+use_gpu: True
+device: 1
+early_stop:
+  patience: 0
+seed: 12345
+federate:
+  client_num: 18
+  mode: standalone
+  total_round_num: 50
+  sample_client_rate: 1.0
+data:
+  splitter: office31_domain_dirichlet
+  # splitter_args: [{'client_num': 200}]
+  type: Domainnet
+  # splits: [0.6,0.2,0.2]
+  # subsample: 0.05
+  # transform: [['ToTensor'], ['Resize', (224, 224)], ['Normalize', {'mean': [0.5, 0.5, 0.5], 'std': [0.5, 0.5, 0.5]}]]
+dataloader:
+  batch_size: 64
+model:
+  type: ViT
+  out_channels: 100
+train:
+  local_update_steps: 1
+  batch_or_epoch: epoch
+  optimizer:
+    type: Adam
+    lr: 2e-4 
+    weight_decay: 0.01 
+grad:
+  grad_clip: 5.0
+criterion:
+  type: CrossEntropyLoss
+trainer:
+  type: cvtrainer
+eval:
+  freq: 2
+  metrics: ['acc', 'correct']
+  count_flops: False
