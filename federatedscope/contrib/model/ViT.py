@@ -16,7 +16,7 @@ class CustomViTForImageClassification(ViTForImageClassification):
 def load_my_net(model_config, local_data):
     """加载预训练ViT并进行目标任务适配"""
     # ---- 核心参数配置 ----
-    pretrained_name = "google/vit-base-patch16-224-in21k"  # 与预处理参数严格对齐
+    pretrained_name = "pretrained_models/vit-base-patch16-224-in21k"
     num_labels = model_config.out_channels
 
     # ---- 加载预训练模型并调整分类头 ----
@@ -24,8 +24,7 @@ def load_my_net(model_config, local_data):
         pretrained_name,
         num_labels=num_labels,
         ignore_mismatched_sizes=True,  # 自动处理分类层维度变化
-        cache_dir="./pretrained_models"  # 自定义缓存路径
-    )
+        local_files_only=True)
 
     # ---- 参数冻结与解冻 ----
     unfreeze_keys = [

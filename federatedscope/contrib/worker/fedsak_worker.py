@@ -52,7 +52,9 @@ class FedSAKServer(Server):
                              sample_client_num=-1,
                              filter_unseen_clients=True):
         """覆写广播模型参数方法"""
-        if self.state >= self._cfg.federate.total_round_num:
+        # 与基类保持一致：仅在训练广播时超过总轮次才终止；评估广播需要放行
+        if msg_type != 'evaluate' and \
+                self.state >= self._cfg.federate.total_round_num:
             self.terminate(msg_type='finish')
             return
 
@@ -62,17 +64,17 @@ class FedSAKServer(Server):
             for rcv_idx in receiver:
                 # 如果有个性化切片，使用客户端的个性化模型进行评估
                 content = None
-                if hasattr(self, "personalized_slices"
-                           ) and rcv_idx in self.personalized_slices:
+                if hasattr(self, "personalized_slices") and \
+                        rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]
-                else:
-                    content = None
 
+                # 与基类一致：评估发生在一个训练轮结束后，使用 state-1 记录评测轮次
+                eval_state = max(self.state - 1, 0)
                 self.comm_manager.send(
                     Message(msg_type=msg_type,
                             sender=self.ID,
                             receiver=[rcv_idx],
-                            state=self.state,
+                            state=eval_state,
                             content=content))
             return
 
@@ -192,7 +194,8 @@ class FedSAKServer(Server):
         # 检查是否需要进行评估
         if (self.state % self._cfg.eval.freq == 0
                 and self.state != self._cfg.federate.total_round_num):
-            logger.info(f'Server: Starting evaluation at round {self.state}')
+            logger.info('Server: Starting evaluation at the end of round '
+                        f'{self.state - 1}')
             # 使用原始eval方法，它会调用broadcast_model_para
             self.eval()
 

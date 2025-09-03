@@ -2,10 +2,12 @@ from federatedscope.core.data import BaseDataTranslator
 from federatedscope.register import register_data
 from torch.utils.data import Dataset, Subset
 from torchvision import transforms
+from torchvision.transforms import InterpolationMode
 from sklearn.model_selection import train_test_split
 import numpy as np
 import os
 from PIL import Image
+import json
 
 
 class DomainnetDataset(Dataset):
@@ -39,6 +41,7 @@ class DomainnetDataset(Dataset):
             if os.path.isdir(os.path.join(root_dir, d))
         ]
         domains.sort()
+        domains = domains[:3]
         self.domain_names = domains
 
         domain_to_selected = {}
@@ -50,7 +53,7 @@ class DomainnetDataset(Dataset):
                 if os.path.isdir(os.path.join(dpath, cls))
             ]
             class_names.sort()
-            picked = class_names[:100]
+            picked = class_names[:20]
             domain_to_selected[d] = set(picked)
             selected_class_names.update(picked)
         self.idx_to_class = sorted(selected_class_names)
@@ -113,26 +116,62 @@ def _apply_split_transform(full_dataset: Dataset, idx_list, transform):
     return TransformWrapper(subset, transform=transform)
 
 
+def _load_preprocessor_config(path: str):
+    try:
+        with open(path, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _pil_resample_to_interpolation_mode(resample: int) -> InterpolationMode:
+    mapping = {
+        0: InterpolationMode.NEAREST,  # PIL.Image.NEAREST
+        1: InterpolationMode.LANCZOS,  # PIL.Image.LANCZOS
+        2: InterpolationMode.BILINEAR,  # PIL.Image.BILINEAR
+        3: InterpolationMode.BICUBIC,  # PIL.Image.BICUBIC
+        4: InterpolationMode.BOX,  # PIL.Image.BOX
+        5: InterpolationMode.HAMMING,  # PIL.Image.HAMMING
+    }
+    return mapping.get(resample, InterpolationMode.BICUBIC)
+
+
+def _build_clip_transforms(pre_cfg: dict):
+    # 默认 CLIP 预处理参数（与 openai/clip-vit-base-patch16 一致）
+    size = pre_cfg.get('size', 224)
+    crop_size = pre_cfg.get('crop_size', size)
+    do_resize = pre_cfg.get('do_resize', True)
+    do_center_crop = pre_cfg.get('do_center_crop', True)
+    image_mean = pre_cfg.get('image_mean', [0.48145466, 0.4578275, 0.40821073])
+    image_std = pre_cfg.get('image_std', [0.26862954, 0.26130258, 0.27577711])
+    resample = _pil_resample_to_interpolation_mode(pre_cfg.get('resample', 3))
+
+    steps = []
+    if do_resize:
+        # 按最短边等比缩放到 size
+        steps.append(transforms.Resize(size, interpolation=resample))
+    if do_center_crop:
+        steps.append(transforms.CenterCrop(crop_size))
+    steps.extend([
+        transforms.ToTensor(),
+        transforms.Normalize(image_mean, image_std),
+    ])
+    t = transforms.Compose(steps)
+    # 训练与评测都使用相同预处理，以与 CLIP 预处理保持一致
+    return t, t
+
+
 def load_domainnet_data(config, client_cfgs=None):
-    # 归一化参数（常见 ImageNet 风格，若需可按需调整）
-    mean = [0.5, 0.5, 0.5]
-    std = [0.5, 0.5, 0.5]
+    # 读取 CLIP 预处理配置
+    # 优先从 config.data.preprocessor_path 获取；否则使用仓库内默认路径
+    preprocessor_path = getattr(getattr(config, 'data', object()),
+                                'preprocessor_path', None)
+    if not preprocessor_path:
+        preprocessor_path = \
+            'pretrained_models/clip-vit-base-patch16/preprocessor_config.json'
 
-    train_transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.RandomResizedCrop(224),
-        transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
-
-    eval_transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std),
-    ])
+    pre_cfg = _load_preprocessor_config(preprocessor_path) or {}
+    train_transform, eval_transform = _build_clip_transforms(pre_cfg)
 
     # 加载完整数据集
     root = "/root/domainnet"
