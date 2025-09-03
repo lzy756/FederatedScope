@@ -27,10 +27,10 @@ model:
   out_channels: 10
   
 train:
-  local_update_steps: 1
+  local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.05
+    lr: 0.01
     weight_decay: 1e-4
 
 criterion:
@@ -41,7 +41,7 @@ eval:
   freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
-  split: ['test']
+  split: ['test', 'val']
 
 personalization:
   K: 5

@@ -14,8 +14,8 @@ data:
   root: data/PACS/
   type: pacs
   splitter: lda
-  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
-  splits: [0.7, 0, 0.3]
+  splitter_args: [{'alpha': 0.1}] # 控制域内数据分布的参数
+  splits: [0.4, 0, 0.6]
   clients_per_domain: [10, 10, 10, 10]
 
 dataloader:
@@ -44,4 +44,4 @@ eval:
   freq: 1
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
-  split: ['test']
+  split: ['test', 'val']

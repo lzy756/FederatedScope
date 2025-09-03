@@ -5,32 +5,32 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 500
-  client_num: 10
+  total_round_num: 300
+  client_num: 40
   method: fedavg
-  sample_client_num: 5 # 每轮选取的用户数
+  sample_client_num: 20 # 每轮选取的用户数
 
 data:
-  root: data/office_caltech_10
-  type: office_caltech
+  root: data/OfficeHomeDataset
+  type: office_home
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.1}] # 控制域内数据分布的参数
-  splits: [0.4, 0, 0.6]
-  clients_per_domain: [5, 3, 1, 1]
+  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
+  splits: [0.7, 0, 0.3]
+  clients_per_domain: [6, 11, 12, 11]
 
 dataloader:
   batch_size: 64
 model:
   type: office_caltech_alexnet
   in_channels: 3
-  out_channels: 10
+  out_channels: 65
   
 train:
   local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.01
+    lr: 0.05
     weight_decay: 1e-4
 
 grad:

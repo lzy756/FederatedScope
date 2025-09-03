@@ -253,14 +253,18 @@ def _create_federated_data_dict(
     return data_dict
 
 
-def _create_cross_domain_validation_sets(all_domain_datasets, val_ratio=0.5):
+def _create_cross_domain_validation_sets(
+    all_domain_datasets, clients_per_domain, target_val_per_client=50
+):
     """
     Create cross-domain validation sets for each domain.
-    Each domain's validation set contains samples from other domains.
+    Each domain's validation set contains samples from other domains' test sets.
+    The validation set size is determined by the number of clients in the domain to ensure fair distribution.
 
     Args:
         all_domain_datasets: Dictionary mapping domain names to their datasets
-        val_ratio: Ratio of samples to use for validation from other domains
+        clients_per_domain: List of client numbers for each domain
+        target_val_per_client: Target number of validation samples per client
 
     Returns:
         dict: Dictionary mapping domain names to their cross-domain validation datasets
@@ -268,34 +272,99 @@ def _create_cross_domain_validation_sets(all_domain_datasets, val_ratio=0.5):
     domain_names = list(all_domain_datasets.keys())
     cross_domain_val_sets = {}
 
-    for target_domain in domain_names:
-        # Collect validation samples from all other domains
-        other_domain_samples = []
+    for domain_idx, target_domain in enumerate(domain_names):
+        # Calculate target validation set size based on number of clients in this domain
+        num_clients_in_domain = clients_per_domain[domain_idx]
+        target_val_size = num_clients_in_domain * target_val_per_client
+
+        logger.info(
+            f"Target domain '{target_domain}' has {num_clients_in_domain} clients, "
+            f"targeting {target_val_size} validation samples ({target_val_per_client} per client)"
+        )
+
+        # Collect all available samples from other domains' test sets
+        other_domain_class_data = {}
 
         for source_domain in domain_names:
             if source_domain != target_domain:
-                source_train_dataset = all_domain_datasets[source_domain]["train"]
-                source_all_data = source_train_dataset.all_data
+                source_test_dataset = all_domain_datasets[source_domain]["test"]
+                source_all_data = source_test_dataset.all_data
 
                 # Group data by class for stratified sampling
-                class_data = {}
-                for i, (_, label) in enumerate(source_all_data):
-                    if label not in class_data:
-                        class_data[label] = []
-                    class_data[label].append(i)
+                for sample_idx, (img_path, label) in enumerate(source_all_data):
+                    if label not in other_domain_class_data:
+                        other_domain_class_data[label] = []
+                    other_domain_class_data[label].append((img_path, label))
 
-                # Sample validation data from each class
-                for class_label, indices in class_data.items():
-                    class_indices = np.array(indices)
-                    np.random.shuffle(class_indices)
+        # Stratified sampling to get target_val_size samples while maintaining class balance
+        other_domain_samples = []
+        if other_domain_class_data:
+            # Calculate samples per class
+            num_classes = len(other_domain_class_data)
+            samples_per_class = max(1, target_val_size // num_classes)
 
-                    # Take val_ratio of samples from this class
-                    val_size = max(1, int(len(class_indices) * val_ratio))
-                    val_indices = class_indices[:val_size]
+            for class_label, samples in other_domain_class_data.items():
+                # Shuffle samples for this class
+                class_samples = np.array(samples, dtype=object)
+                np.random.shuffle(class_samples)
 
-                    # Add selected samples to validation set
-                    for idx in val_indices:
-                        other_domain_samples.append(source_all_data[idx])
+                # Take up to samples_per_class samples, allow repetition if not enough
+                if len(class_samples) >= samples_per_class:
+                    # Enough samples, no repetition needed
+                    selected_samples = class_samples[:samples_per_class]
+                else:
+                    # Not enough samples, repeat samples to reach target
+                    selected_samples = []
+                    samples_needed = samples_per_class
+                    while samples_needed > 0:
+                        if samples_needed >= len(class_samples):
+                            # Need more than available, take all and repeat
+                            selected_samples.extend(class_samples)
+                            samples_needed -= len(class_samples)
+                        else:
+                            # Need partial, take what's needed
+                            selected_samples.extend(class_samples[:samples_needed])
+                            samples_needed = 0
+
+                        # Reshuffle for next round to avoid patterns
+                        if samples_needed > 0:
+                            np.random.shuffle(class_samples)
+
+                # Add selected samples to validation set
+                other_domain_samples.extend(selected_samples)
+
+            # If we still need more samples after stratified sampling, add more with repetition
+            if len(other_domain_samples) < target_val_size:
+                # Collect all available samples and allow repetition
+                all_available_samples = []
+                for class_label, samples in other_domain_class_data.items():
+                    all_available_samples.extend(samples)
+
+                if all_available_samples:
+                    additional_needed = target_val_size - len(other_domain_samples)
+
+                    # Repeat samples if necessary to meet the target
+                    repeated_samples = []
+                    while len(repeated_samples) < additional_needed:
+                        # Shuffle to avoid patterns
+                        np.random.shuffle(all_available_samples)
+
+                        # Add samples, up to what we need
+                        remaining_needed = additional_needed - len(repeated_samples)
+                        if remaining_needed >= len(all_available_samples):
+                            repeated_samples.extend(all_available_samples)
+                        else:
+                            repeated_samples.extend(
+                                all_available_samples[:remaining_needed]
+                            )
+
+                    other_domain_samples.extend(repeated_samples)
+
+                    logger.info(
+                        f"Domain '{target_domain}': Used sample repetition to reach target size. "
+                        f"Total unique samples available: {len(all_available_samples)}, "
+                        f"Target size: {target_val_size}"
+                    )
 
         # Create validation dataset from collected samples
         if other_domain_samples:
@@ -310,7 +379,8 @@ def _create_cross_domain_validation_sets(all_domain_datasets, val_ratio=0.5):
             )
             cross_domain_val_sets[target_domain] = val_dataset
             logger.info(
-                f"Created cross-domain validation set for {target_domain}: {len(val_dataset)} samples"
+                f"Created cross-domain validation set for {target_domain}: {len(val_dataset)} samples "
+                f"({len(val_dataset) / num_clients_in_domain:.1f} samples per client)"
             )
         else:
             cross_domain_val_sets[target_domain] = None
@@ -505,7 +575,10 @@ def load_office_caltech_dataset(config, client_cfgs=None):
 
     # Step 2: Create cross-domain validation sets
     logger.info("Creating cross-domain validation sets...")
-    cross_domain_val_sets = _create_cross_domain_validation_sets(all_domain_datasets)
+    # Get target validation samples per client from config
+    cross_domain_val_sets = _create_cross_domain_validation_sets(
+        all_domain_datasets, clients_per_domain, 200
+    )
 
     # Step 3: Create federated data dictionaries with cross-domain validation
     data_dicts = []

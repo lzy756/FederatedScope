@@ -26,10 +26,10 @@ model:
   in_channels: 3
   out_channels: 31
 train:
-  local_update_steps: 1
+  local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
-    lr: 0.05
+    lr: 0.01
     weight_decay: 1e-4
 
 grad:
@@ -42,7 +42,7 @@ eval:
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
   count_flops: False
-  split: ['test']
+  split: ['test', 'val']
 trainer:
   type: fdsetrainer
 

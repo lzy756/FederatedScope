@@ -1,5 +1,5 @@
 use_gpu: True
-device: 0
+device: 1
 early_stop:
   patience: 0
 seed: 42
@@ -7,34 +7,37 @@ federate:
   mode: standalone
   total_round_num: 500
   client_num: 10
-  method: fedavg
+  method: fedprox
   sample_client_num: 5 # 每轮选取的用户数
 
+fedprox:
+  use: True
+  mu: 0.01
+
 data:
-  root: data/office_caltech_10
-  type: office_caltech
+  root: data/Office-31
+  type: office_31
   consistent_label_distribution: True
   splitter: lda
-  splitter_args: [{'alpha': 0.1}] # 控制域内数据分布的参数
-  splits: [0.4, 0, 0.6]
-  clients_per_domain: [5, 3, 1, 1]
+  splitter_args: [{'alpha': 0.5}] # 控制域内数据分布的参数
+  splits: [0.7, 0, 0.3]
+  clients_per_domain: [7, 2, 1]
+
+grad:
+  grad_clip: 5.0
 
 dataloader:
   batch_size: 64
 model:
   type: office_caltech_alexnet
   in_channels: 3
-  out_channels: 10
-  
+  out_channels: 31
 train:
   local_update_steps: 2
   batch_or_epoch: epoch
   optimizer:
     lr: 0.01
     weight_decay: 1e-4
-
-grad:
-  grad_clip: 5.0
 
 criterion:
   type: CrossEntropyLoss

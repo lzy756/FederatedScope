@@ -134,23 +134,6 @@ class FDSEAggregator(ClientsAvgAggregator):
                     logger.info(
                         f"Computing cosine distances for parameter '{param_name}'"
                     )
-                    for i in range(len(param_tensors)):
-                        for j in range(i + 1, len(param_tensors)):
-                            # Flatten tensors for cosine similarity calculation
-                            tensor_i = param_tensors[i].flatten()
-                            tensor_j = param_tensors[j].flatten()
-
-                            # Calculate cosine similarity
-                            cosine_sim = F.cosine_similarity(
-                                tensor_i.unsqueeze(0), tensor_j.unsqueeze(0)
-                            )
-                            cosine_distance = 1 - cosine_sim.item()
-
-                            logger.info(
-                                f"Param name: {param_name} Client {client_ids[i]} vs Client {client_ids[j]}: "
-                                f"cosine similarity = {cosine_sim.item():.6f}, "
-                                f"cosine distance = {cosine_distance:.6f}"
-                            )
 
                 # Use weighted average aggregation
                 aggregated_param = (
@@ -198,22 +181,22 @@ class FDSEAggregator(ClientsAvgAggregator):
                     if param_name in params
                 ]
                 # Calculate and log cosine distances between client parameters
-                for i in range(len(client_ids)):
-                    for j in range(i + 1, len(client_ids)):
-                        tensor_i = param_tensors[i].flatten()
-                        tensor_j = param_tensors[j].flatten()
+                # for i in range(len(client_ids)):
+                #     for j in range(i + 1, len(client_ids)):
+                #         tensor_i = param_tensors[i].flatten()
+                #         tensor_j = param_tensors[j].flatten()
 
-                        # Calculate cosine similarity
-                        cosine_sim = F.cosine_similarity(
-                            tensor_i.unsqueeze(0), tensor_j.unsqueeze(0)
-                        )
-                        cosine_distance = 1 - cosine_sim.item()
+                #         # Calculate cosine similarity
+                #         cosine_sim = F.cosine_similarity(
+                #             tensor_i.unsqueeze(0), tensor_j.unsqueeze(0)
+                #         )
+                #         cosine_distance = 1 - cosine_sim.item()
 
-                        logger.info(
-                            f"Param name: {param_name} Client {client_ids[i]} vs Client {client_ids[j]}: "
-                            f"cosine similarity = {cosine_sim.item():.6f}, "
-                            f"cosine distance = {cosine_distance:.6f}"
-                        )
+                #         logger.info(
+                #             f"Param name: {param_name} Client {client_ids[i]} vs Client {client_ids[j]}: "
+                #             f"cosine similarity = {cosine_sim.item():.6f}, "
+                #             f"cosine distance = {cosine_distance:.6f}"
+                #         )
 
                 # Use weighted average aggregation
                 aggregated_param = (

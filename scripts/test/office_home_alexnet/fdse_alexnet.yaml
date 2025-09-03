@@ -5,7 +5,7 @@ early_stop:
 seed: 42
 federate:
   mode: standalone
-  total_round_num: 500
+  total_round_num: 200
   client_num: 40
   method: fdse
   sample_client_num: 20 # 每轮选取的用户数
@@ -42,7 +42,7 @@ eval:
   metrics: ['acc', 'correct']
   best_res_update_round_wise_key: test_loss
   count_flops: False
-  split: ['test']
+  split: ['test', 'val']
 trainer:
   type: fdsetrainer
 

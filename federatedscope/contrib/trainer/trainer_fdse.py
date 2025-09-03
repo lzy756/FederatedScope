@@ -2,7 +2,7 @@ from federatedscope.register import register_trainer
 from federatedscope.core.trainers.torch_trainer import GeneralTorchTrainer
 import os
 import logging
-
+import copy
 import numpy as np
 
 try:
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 class FDSETrainer(GeneralTorchTrainer):
     def __init__(self, model, data, device, config, only_for_eval=False, monitor=None):
         super().__init__(model, data, device, config, only_for_eval, monitor)
-        global_bn_statistics = self.ctx.model.get_bn_dfe_statistics()
-        self.ctx.custom_bn_statistics = {
+        self.global_bn_statistics = self.ctx.model.get_bn_dfe_statistics()
+        self.custom_bn_statistics = {
             name: {
                 "running_mean": torch.zeros_like(
                     stat["running_mean"], device=device
@@ -42,8 +42,9 @@ class FDSETrainer(GeneralTorchTrainer):
                     stat["running_var"], device=device
                 ).requires_grad_(False),
             }
-            for name, stat in global_bn_statistics.items()
+            for name, stat in self.global_bn_statistics.items()
         }
+        # self.global_model = copy.deepcopy(self.ctx.model)
 
     def _param_filter(self, state_dict, filter_keywords=None):
         """
@@ -140,7 +141,9 @@ class FDSETrainer(GeneralTorchTrainer):
             ctx.scheduler = get_scheduler(
                 ctx.optimizer, **ctx.cfg[ctx.cur_mode].scheduler
             )
-            ctx.global_bn_statistics = ctx.model.get_bn_dfe_statistics()
+            self.global_bn_statistics = ctx.model.get_bn_dfe_statistics()
+            self.global_model = copy.deepcopy(ctx.model)
+            self.global_model.eval()
 
         # TODO: the number of batch and epoch is decided by the current mode
         #  and data split, so the number of batch and epoch should be
@@ -168,6 +171,7 @@ class FDSETrainer(GeneralTorchTrainer):
         """
         x, label = [_.to(ctx.device) for _ in ctx.data_batch]
         pred, des_outputs = ctx.model(x, return_dse_outputs=True)
+        global_pred = self.global_model(x)
         if len(label.size()) == 0:
             label = label.unsqueeze(0)
 
@@ -183,16 +187,16 @@ class FDSETrainer(GeneralTorchTrainer):
             batch_var = dse_out.var(dim=[0, 2, 3], unbiased=False)
             # 使用更平滑的更新规则
             local_running_mean = (
-                momentum * ctx.custom_bn_statistics[name]["running_mean"]
+                momentum * self.custom_bn_statistics[name]["running_mean"]
                 + (1 - momentum) * batch_mean
             )
             local_running_var = (
-                momentum * ctx.custom_bn_statistics[name]["running_var"]
+                momentum * self.custom_bn_statistics[name]["running_var"]
                 + (1 - momentum) * batch_var
             )
 
-            global_running_mean = ctx.global_bn_statistics[name]["running_mean"]
-            global_running_var = ctx.global_bn_statistics[name]["running_var"]
+            global_running_mean = self.global_bn_statistics[name]["running_mean"]
+            global_running_var = self.global_bn_statistics[name]["running_var"]
             # 获取特征维度d（通道数）用于归一化
             d = local_running_mean.shape[0]  # 假设形状为[C]，C是通道数
 
@@ -202,15 +206,14 @@ class FDSETrainer(GeneralTorchTrainer):
             )
 
             # 计算方差的L1损失
-            local_var_l1 = torch.norm(local_running_var, p=1)
-            global_var_l1 = torch.norm(global_running_var, p=1)
-            var_loss = ((local_var_l1 - global_var_l1) / d) ** 2
-
+            # local_var_l1 = torch.norm(local_running_var, p=1)
+            # global_var_l1 = torch.norm(global_running_var, p=1)
+            # var_loss = ((local_var_l1 - global_var_l1) / d) ** 2
+            # 计算方差的L2损失
+            var_loss = torch.norm(local_running_var - global_running_var, p=2) ** 2 / d
             # 计算当前层的一致性损失
             layer_loss_con = mean_loss + var_loss
-            logger.info(
-                f"Layer: {name}, running mean: {local_running_mean.detach().norm().item()}/{global_running_mean.detach().norm().item()}, running var: {local_running_var.detach().norm().item()}/{global_running_var.detach().norm().item()}"
-            )
+
             # 限制损失值防止数值爆炸
             layer_loss_con = torch.clamp(layer_loss_con, max=max_loss_value)
 
@@ -223,10 +226,10 @@ class FDSETrainer(GeneralTorchTrainer):
 
             loss_con_list.append(layer_loss_con)
 
-            ctx.custom_bn_statistics[name]["running_mean"] = (
+            self.custom_bn_statistics[name]["running_mean"] = (
                 local_running_mean.detach().clone().requires_grad_(False)
             )
-            ctx.custom_bn_statistics[name]["running_var"] = (
+            self.custom_bn_statistics[name]["running_var"] = (
                 local_running_var.detach().clone().requires_grad_(False)
             )
 
@@ -247,9 +250,18 @@ class FDSETrainer(GeneralTorchTrainer):
         logger.info(
             f"Consistency loss: {loss_con.item()}, list: {[l.item() for l in loss_con_list]}"
         )
+
+        # 计算KL散度损失
+        kl_loss_fn = torch.nn.KLDivLoss(reduction="batchmean")
+        kl_loss = kl_loss_fn(
+            torch.log_softmax(pred, dim=1), torch.softmax(global_pred, dim=1)
+        )
+        logger.info(f"KL divergence loss: {kl_loss.item()}")
         ctx.y_true = CtxVar(label, LIFECYCLE.BATCH)
         ctx.y_prob = CtxVar(pred, LIFECYCLE.BATCH)
-        ctx.loss_batch = CtxVar(ctx.criterion(pred, label) + loss_con, LIFECYCLE.BATCH)
+        ctx.loss_batch = CtxVar(
+            ctx.criterion(pred, label) + loss_con + 0.01 * kl_loss, LIFECYCLE.BATCH
+        )
         ctx.batch_size = CtxVar(len(label), LIFECYCLE.BATCH)
 
 
