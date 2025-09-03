@@ -1,5 +1,5 @@
 use_gpu: True
-device: 0
+device: 1
 expname_tag: Domainnet_ViT_fedsak_lda
 early_stop:
   patience: 0
