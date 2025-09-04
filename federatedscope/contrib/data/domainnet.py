@@ -41,7 +41,7 @@ class DomainnetDataset(Dataset):
             if os.path.isdir(os.path.join(root_dir, d))
         ]
         domains.sort()
-        domains = domains[:3]
+        domains = domains
         self.domain_names = domains
 
         domain_to_selected = {}
@@ -53,7 +53,7 @@ class DomainnetDataset(Dataset):
                 if os.path.isdir(os.path.join(dpath, cls))
             ]
             class_names.sort()
-            picked = class_names[:20]
+            picked = class_names[:170]
             domain_to_selected[d] = set(picked)
             selected_class_names.update(picked)
         self.idx_to_class = sorted(selected_class_names)
