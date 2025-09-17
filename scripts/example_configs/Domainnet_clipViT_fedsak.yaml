@@ -5,6 +5,7 @@ early_stop:
   patience: 0
 seed: 12345
 federate:
+  save_to: 'exp_models/Domainnet_ViT_fedsak_lda'   # 目录即可
   client_num: 30
   method: fedsak
   mode: standalone

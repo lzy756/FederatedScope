@@ -4,6 +4,7 @@ from federatedscope.core.message import Message
 from federatedscope.register import register_worker
 import logging
 import os
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,7 @@ class FedSAKClient(Client):
 
         说明：
         - 仅在配置项 cfg.federate.save_to 非空时启用；
-        - 使用 Trainer.save_model 保持与框架一致的 checkpoint 结构：
+        - 直接使用 torch.save，保持与框架一致的 checkpoint 结构：
           {'cur_round': round, 'model': state_dict}
         - 采用覆盖式保存，保持最新快照；
         """
@@ -363,8 +364,12 @@ class FedSAKClient(Client):
             save_dir = os.path.join(save_root, 'client')
             os.makedirs(save_dir, exist_ok=True)
             ckpt_path = os.path.join(save_dir, f'client_model_{self.ID}.pt')
-            # 复用通用 Trainer 的保存接口
-            self.trainer.save_model(ckpt_path, cur_round=self.state)
+            # 直接保存当前本地完整模型
+            ckpt = {
+                'cur_round': self.state,
+                'model': self.model.state_dict(),
+            }
+            torch.save(ckpt, ckpt_path)
             logger.debug(f"Client #{self.ID}: model saved to {ckpt_path} "
                          f"(round {self.state})")
         except Exception as e:
