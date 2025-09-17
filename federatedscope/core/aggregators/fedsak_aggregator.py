@@ -24,6 +24,9 @@ class FedSAKAggregator(Aggregator):
                     f"lambda={self.lmbda}, lr={self.lr}")
         logger.info(f"Share patterns: {self.share_patterns}")
 
+    def save_model(self, path, current_round=-1):
+        pass
+
     def _para_weighted_avg(self, models, recover_fun=None):
         """
         Calculates the weighted average of models.

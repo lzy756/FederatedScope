@@ -3,6 +3,7 @@ from federatedscope.core.workers.client import Client
 from federatedscope.core.message import Message
 from federatedscope.register import register_worker
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +279,9 @@ class FedSAKClient(Client):
                                           role='Client #{}'.format(self.ID),
                                           return_raw=True))
 
+        # 2.5) 保存本地模型
+        self._save_local_model()
+
         # 3) 获取模型参数 - 自定义trainer的_param_filter会自动筛选共享层
         model_para = self.trainer.get_model_para()
 
@@ -328,6 +332,9 @@ class FedSAKClient(Client):
                                           role='Client #{}'.format(self.ID),
                                           return_raw=True))
 
+        # 保存本地模型
+        self._save_local_model()
+
         # 获取模型参数并发送
         model_para = self.trainer.get_model_para()
         # print(model_para.keys())
@@ -338,6 +345,31 @@ class FedSAKClient(Client):
                     receiver=[sender],
                     state=self.state,
                     content=(sample_size, model_para)))
+
+    # ------- 工具方法：保存客户端本地模型 -------
+    def _save_local_model(self):
+        """将当前客户端完整本地模型保存到 {save_to}/client/client_model_{ID}.pt
+
+        说明：
+        - 仅在配置项 cfg.federate.save_to 非空时启用；
+        - 使用 Trainer.save_model 保持与框架一致的 checkpoint 结构：
+          {'cur_round': round, 'model': state_dict}
+        - 采用覆盖式保存，保持最新快照；
+        """
+        try:
+            save_root = getattr(self._cfg.federate, 'save_to', '')
+            if not save_root:
+                return
+            save_dir = os.path.join(save_root, 'client')
+            os.makedirs(save_dir, exist_ok=True)
+            ckpt_path = os.path.join(save_dir, f'client_model_{self.ID}.pt')
+            # 复用通用 Trainer 的保存接口
+            self.trainer.save_model(ckpt_path, cur_round=self.state)
+            logger.debug(f"Client #{self.ID}: model saved to {ckpt_path} "
+                         f"(round {self.state})")
+        except Exception as e:
+            logger.warning(
+                f"Client #{self.ID}: failed to save model, error: {e}")
 
 
 # 按照框架要求注册worker
