@@ -139,3 +139,8 @@ dmypy.json
 .idea/
 
 **/.DS_Store
+
+# saved trained models
+*.pt
+*.pth
+exp_models/
