@@ -24,6 +24,9 @@ class FedSAKAggregator(Aggregator):
                     f"lambda={self.lmbda}, lr={self.lr}")
         logger.info(f"Share patterns: {self.share_patterns}")
 
+    def save_model(self, path, current_round=-1):
+        pass
+
     def _para_weighted_avg(self, models, recover_fun=None):
         """
         Calculates the weighted average of models.
@@ -101,12 +104,6 @@ class FedSAKAggregator(Aggregator):
             n_client = len(model_params)
             updated_dicts = [dict() for _ in range(n_client)]
 
-            # --- 在这里打印所有 state_dict key ---
-            # model_params 是一个 list，每个元素都是一个 dict(state_dict)
-            #all_keys = list(model_params[0].keys())
-            #logger.info("[FedSAK] 全部模型参数名：\n    " + "\n    ".join(all_keys))
-
-
             # 处理每个共享模式
             for pattern in self.share_patterns:
                 try:
@@ -119,10 +116,6 @@ class FedSAKAggregator(Aggregator):
                     matching_keys = list(set(matching_keys))
                     # print(f"Matching keys for
                     # pattern '{pattern}': {matching_keys}")
-
-                    # —— 在这里加日志 ——
-                    #logger.info(f"[FedSAK] pattern='{pattern}' matched keys:\n    " +
-                                #"\n    ".join(matching_keys))
 
                     if not matching_keys:
                         logger.warning(

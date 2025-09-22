@@ -2,16 +2,14 @@ use_gpu: True
 device: 0
 early_stop:
   improve_indicator_mode: mean
-  patience: 100
+  patience: 30
 federate:
   mode: 'standalone'
   make_global_eval: False
   total_round_num: 100
   share_local_model: True
   data_weighted_aggr: True
-fedprox:
-  use: True
-  mu: 0.1
+  method: fedrep
 data:
   root: data/
   type: graph_multi_domain_mol
@@ -20,6 +18,23 @@ data:
     - [ "AddEdgeAttr", { } ]
     - [ "PadFeatures", { "target_dim": 37 } ]
     - [ "Constant",  { "value": 1.0, "cat": False } ]
+personalization:
+  # 指明哪些层只做本地更新、不参与全局聚合
+  local_param: ['clf','gnn.convs.*.eps','gnn.convs.*.nn.norms.*.running_mean','gnn.convs.*.nn.norms.*.running_var','gnn.convs.*.nn.norms.*.num_batches_tracked','linear']
+  # 本地微调的 inner loop 步数
+  local_update_steps: 4
+
+  # FedRep 特有的超参：
+  # regular_weight: L2 正则强度（本地正则化用）
+  regular_weight: 0.1
+
+  # feature extractor（shared head）训练轮次 & 学习率
+  epoch_feature: 2
+  lr_feature: 0.1
+
+  # linear classifier（private head）训练轮次 & 学习率
+  epoch_linear: 1
+  lr_linear: 0.1
 dataloader:
   type: pyg
 model:
@@ -29,9 +44,9 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 2
+  local_update_steps: 8
   optimizer:
-    lr: 0.05
+    lr: 0.5
     weight_decay: 0.0005
     type: SGD
 criterion:
@@ -39,5 +54,5 @@ criterion:
 trainer:
   type: graphminibatch_trainer
 eval:
-  freq: 1
+  freq: 5
   metrics: ['acc', 'correct']

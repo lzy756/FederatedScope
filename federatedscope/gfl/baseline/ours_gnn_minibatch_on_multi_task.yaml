@@ -2,16 +2,17 @@ use_gpu: True
 device: 0
 early_stop:
   improve_indicator_mode: mean
-  patience: 20
+  patience: 101
 federate:
   mode: 'standalone'
+  save_to: 'exp_models/graph_fedsak'   # 目录即可
   make_global_eval: False
   method: fedsak
   client_num: 10
-  total_round_num: 100
+  total_round_num: 101
   share_local_model: False
 aggregator:
-  lambda_: 0.005
+  lambda_: 0.05
   lr_shared: 1
   filter_keys:
     - "encoder_atom.atom_embedding_list"
@@ -46,7 +47,7 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 16
+  local_update_steps: 64
   optimizer:
     lr: 0.5
     weight_decay: 0.0005
@@ -56,5 +57,5 @@ criterion:
 trainer:
   type: fedsak
 eval:
-  freq: 5
+  freq: 1
   metrics: ['acc', 'correct']

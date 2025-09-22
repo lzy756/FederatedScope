@@ -9,9 +9,7 @@ federate:
   total_round_num: 100
   share_local_model: True
   data_weighted_aggr: True
-fedprox:
-  use: True
-  mu: 0.1
+  method: local
 data:
   root: data/
   type: graph_multi_domain_mol
@@ -29,9 +27,9 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 2
+  local_update_steps: 4
   optimizer:
-    lr: 0.05
+    lr: 0.1
     weight_decay: 0.0005
     type: SGD
 criterion:

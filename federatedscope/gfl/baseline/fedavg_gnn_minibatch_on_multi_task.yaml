@@ -1,5 +1,8 @@
 use_gpu: True
 device: 0
+early_stop:
+  improve_indicator_mode: mean
+  patience: 100
 federate:
   mode: 'standalone'
   make_global_eval: False
@@ -23,7 +26,7 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 2
+  local_update_steps: 1
   optimizer:
     lr: 0.05
     weight_decay: 0.0005
@@ -33,5 +36,5 @@ criterion:
 trainer:
   type: graphminibatch_trainer
 eval:
-  freq: 5
+  freq: 1
   metrics: ['acc', 'correct']

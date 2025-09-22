@@ -3,6 +3,8 @@ from federatedscope.core.workers.client import Client
 from federatedscope.core.message import Message
 from federatedscope.register import register_worker
 import logging
+import os
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,9 @@ class FedSAKServer(Server):
                              sample_client_num=-1,
                              filter_unseen_clients=True):
         """覆写广播模型参数方法"""
-        if self.state >= self._cfg.federate.total_round_num:
+        # 与基类保持一致：仅在训练广播时超过总轮次才终止；评估广播需要放行
+        if msg_type != 'evaluate' and \
+                self.state >= self._cfg.federate.total_round_num:
             self.terminate(msg_type='finish')
             return
 
@@ -62,17 +66,17 @@ class FedSAKServer(Server):
             for rcv_idx in receiver:
                 # 如果有个性化切片，使用客户端的个性化模型进行评估
                 content = None
-                if hasattr(self, "personalized_slices"
-                           ) and rcv_idx in self.personalized_slices:
+                if hasattr(self, "personalized_slices") and \
+                        rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]
-                else:
-                    content = None
 
+                # 与基类一致：评估发生在一个训练轮结束后，使用 state-1 记录评测轮次
+                eval_state = max(self.state - 1, 0)
                 self.comm_manager.send(
                     Message(msg_type=msg_type,
                             sender=self.ID,
                             receiver=[rcv_idx],
-                            state=self.state,
+                            state=eval_state,
                             content=content))
             return
 
@@ -119,18 +123,9 @@ class FedSAKServer(Server):
                 self.sample_client_ids = receiver
 
         # 广播开始训练的消息 - 不需要发送模型参数，客户端将使用自己当前的模型
-        # 广播开始训练的消息 - 不需要发送模型参数，客户端将使用自己当前的模型
         for rcv_idx in receiver:
-            if self.state == 0:
-                # 第0轮不下发 Server 模型，让客户端自行初始化
-                self.comm_manager.send(
-                    Message(msg_type="trigger_train",
-                            sender=self.ID,
-                            receiver=[rcv_idx],
-                            state=self.state,
-                            content=None))
-            elif not hasattr(self, "personalized_slices"):
-                # 如果后续还没有计算出 personalized_slices，再下发 Server 模型
+            # 对于首轮训练或没有个性化切片的情况，需要发送初始模型
+            if self.state == 0 or not hasattr(self, "personalized_slices"):
                 content = self.model.state_dict()
                 self.comm_manager.send(
                     Message(msg_type="model_para",
@@ -139,7 +134,8 @@ class FedSAKServer(Server):
                             state=self.state,
                             content=content))
             else:
-                # 如果已有 personalized_slices，就按原逻辑 send trigger_train 或 update_model
+                # 如果客户端有个性化切片，使用trigger_train消息类型触发训练
+                # 如果没有个性化切片(新加入的客户端)，发送空内容，客户端会使用现有模型
                 content = None
                 if rcv_idx in self.personalized_slices:
                     content = self.personalized_slices[rcv_idx]
@@ -200,7 +196,8 @@ class FedSAKServer(Server):
         # 检查是否需要进行评估
         if (self.state % self._cfg.eval.freq == 0
                 and self.state != self._cfg.federate.total_round_num):
-            logger.info(f'Server: Starting evaluation at round {self.state}')
+            logger.info('Server: Starting evaluation at the end of round '
+                        f'{self.state - 1}')
             # 使用原始eval方法，它会调用broadcast_model_para
             self.eval()
 
@@ -283,6 +280,9 @@ class FedSAKClient(Client):
                                           role='Client #{}'.format(self.ID),
                                           return_raw=True))
 
+        # 2.5) 保存本地模型
+        self._save_local_model()
+
         # 3) 获取模型参数 - 自定义trainer的_param_filter会自动筛选共享层
         model_para = self.trainer.get_model_para()
 
@@ -333,6 +333,9 @@ class FedSAKClient(Client):
                                           role='Client #{}'.format(self.ID),
                                           return_raw=True))
 
+        # 保存本地模型
+        self._save_local_model()
+
         # 获取模型参数并发送
         model_para = self.trainer.get_model_para()
         # print(model_para.keys())
@@ -343,6 +346,35 @@ class FedSAKClient(Client):
                     receiver=[sender],
                     state=self.state,
                     content=(sample_size, model_para)))
+
+    # ------- 工具方法：保存客户端本地模型 -------
+    def _save_local_model(self):
+        """将当前客户端完整本地模型保存到 {save_to}/client/client_model_{ID}.pt
+
+        说明：
+        - 仅在配置项 cfg.federate.save_to 非空时启用；
+        - 直接使用 torch.save，保持与框架一致的 checkpoint 结构：
+          {'cur_round': round, 'model': state_dict}
+        - 采用覆盖式保存，保持最新快照；
+        """
+        try:
+            save_root = getattr(self._cfg.federate, 'save_to', '')
+            if not save_root:
+                return
+            save_dir = os.path.join(save_root, 'client')
+            os.makedirs(save_dir, exist_ok=True)
+            ckpt_path = os.path.join(save_dir, f'client_model_{self.ID}.pt')
+            # 直接保存当前本地完整模型
+            ckpt = {
+                'cur_round': self.state,
+                'model': self.model.state_dict(),
+            }
+            torch.save(ckpt, ckpt_path)
+            logger.debug(f"Client #{self.ID}: model saved to {ckpt_path} "
+                         f"(round {self.state})")
+        except Exception as e:
+            logger.warning(
+                f"Client #{self.ID}: failed to save model, error: {e}")
 
 
 # 按照框架要求注册worker

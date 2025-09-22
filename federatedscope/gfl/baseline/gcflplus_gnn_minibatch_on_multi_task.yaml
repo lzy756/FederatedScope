@@ -2,10 +2,10 @@ use_gpu: True
 device: 0
 early_stop:
   improve_indicator_mode: mean
-  patience: 10
+  patience: 100
 federate:
   mode: standalone
-  total_round_num: 400
+  total_round_num: 100
   method: gcflplus
 data:
   root: data/
@@ -25,7 +25,7 @@ gcflplus:
   seq_length: 5
   standardize: False
 train:
-  local_update_steps: 16
+  local_update_steps: 8
   optimizer:
     lr: 0.5
     weight_decay: 0.0005

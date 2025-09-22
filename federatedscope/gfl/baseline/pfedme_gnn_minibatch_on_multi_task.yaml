@@ -9,9 +9,15 @@ federate:
   total_round_num: 100
   share_local_model: True
   data_weighted_aggr: True
-fedprox:
-  use: True
-  mu: 0.1
+  method: pfedme           #启用pFedMe
+personalization:
+  K: 3                     # pFedMe 内部迭代次数
+  beta: 1.0                # pFedMe 外层正则系数
+  local_param: ['encoder_atom.atom_embedding_list','gnn.convs.*.nn.linears','gnn.convs.*.nn.norms']          # 可个性化的参数列表（空表示所有可训练参数都个性化）
+  local_update_steps: 16    # pFedMe 本地迭代步数（每轮内部迭代次数）
+  lr: 0.1                 # pFedMe 内部更新学习率
+  regular_weight: 0.1     # pFedMe Moreau 正则权重
+  share_non_trainable_para: False
 data:
   root: data/
   type: graph_multi_domain_mol
@@ -29,9 +35,9 @@ model:
   out_channels: 0
   task: graph
 train:
-  local_update_steps: 2
+  local_update_steps: 4
   optimizer:
-    lr: 0.05
+    lr: 0.1
     weight_decay: 0.0005
     type: SGD
 criterion:
