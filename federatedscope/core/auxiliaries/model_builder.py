@@ -115,6 +115,7 @@ def get_model(model_config, local_data=None, backend='torch'):
         ``mlp``                              ``core.mlp.MLP``
         ``quadratic``                        ``tabular.model.QuadraticModel``
         ``convnet2, convnet5, vgg11``        ``cv.model.get_cnn()``
+        ``fedlsa_cnn``                       ``cv.model.get_cnn()``
         ``lstm``                             ``nlp.model.get_rnn()``
         ``{}@transformers``                  ``nlp.model.get_transformer()``
         ``gcn, sage, gpr, gat, gin, mpnn``   ``gfl.model.get_gnn()``
@@ -162,7 +163,7 @@ def get_model(model_config, local_data=None, backend='torch'):
         from federatedscope.tabular.model import QuadraticModel
         model = QuadraticModel(input_shape[-1], 1)
 
-    elif model_config.type.lower() in ['convnet2', 'convnet5', 'vgg11']:
+    elif model_config.type.lower() in ['convnet2', 'convnet5', 'vgg11', 'fedlsa_cnn']:
         from federatedscope.cv.model import get_cnn
         model = get_cnn(model_config, input_shape)
     elif model_config.type.lower() in [
@@ -209,3 +210,4 @@ def get_trainable_para_names(model):
         if param.requires_grad:
             grad_params.add(name)
     return grad_params
+

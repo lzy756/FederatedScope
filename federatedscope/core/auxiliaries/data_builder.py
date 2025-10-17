@@ -24,7 +24,7 @@ TRANS_DATA_MAP = {
         'sider', 'clintox', 'esol', 'freesolv', 'lipo', 'cifar4cl', 'cifar4lp'
     ],
     'DummyDataTranslator': [
-        'toy', 'quadratic', 'femnist', 'celeba', 'shakespeare', 'twitter',
+        'toy', 'quadratic', 'femnist', 'celeba', 'office_caltech', 'shakespeare', 'twitter',
         'subreddit', 'synthetic', 'ciao', 'epinions', '.*?vertical_fl_data.*?',
         '.*?movielens.*?', '.*?netflix.*?', '.*?cikmcup.*?',
         'graph_multi_domain.*?', 'cora', 'citeseer', 'pubmed', 'dblp_conf',
@@ -141,3 +141,4 @@ def get_data(config, client_cfgs=None):
     setup_seed(config.seed)
 
     return data, modified_config
+

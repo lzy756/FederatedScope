@@ -1,7 +1,8 @@
 from federatedscope.register import register_scheduler
 
 
-def call_my_scheduler(optimizer, reg_type):
+def call_my_scheduler(optimizer, reg_type, **kwargs):
+    # Accept but ignore additional kwargs to avoid conflicts with other schedulers
     try:
         import torch.optim as optim
     except ImportError:
@@ -14,5 +15,9 @@ def call_my_scheduler(optimizer, reg_type):
             scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         return scheduler
 
+    # Return None if this is not our scheduler type
+    return None
+
 
 register_scheduler('myscheduler', call_my_scheduler)
+

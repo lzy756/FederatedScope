@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import division
 
 from federatedscope.cv.model.cnn import ConvNet2, ConvNet5, VGG11
+from federatedscope.cv.model.fedlsa_cnn import FedLSACNN
 
 
 def get_cnn(model_config, input_shape):
@@ -15,6 +16,13 @@ def get_cnn(model_config, input_shape):
                          hidden=model_config.hidden,
                          class_num=model_config.out_channels,
                          dropout=model_config.dropout)
+    elif model_config.type == 'fedlsa_cnn':
+        model = FedLSACNN(in_channels=input_shape[-3],
+                          h=input_shape[-2],
+                          w=input_shape[-1],
+                          hidden=model_config.hidden,
+                          class_num=model_config.out_channels,
+                          dropout=model_config.dropout)
     elif model_config.type == 'convnet5':
         model = ConvNet5(in_channels=input_shape[-3],
                          h=input_shape[-2],
@@ -33,3 +41,4 @@ def get_cnn(model_config, input_shape):
         raise ValueError(f'No model named {model_config.type}!')
 
     return model
+

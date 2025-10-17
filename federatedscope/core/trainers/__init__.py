@@ -15,10 +15,22 @@ from federatedscope.core.trainers.trainer_fedprox import wrap_fedprox_trainer
 from federatedscope.core.trainers.trainer_nbafl import wrap_nbafl_trainer, \
     wrap_nbafl_server
 
+# Import FedLSA trainer to trigger registration
+try:
+    from federatedscope.core.trainers.trainer_FedLSA import FedLSATrainer
+except ImportError as e:
+    import logging
+    logging.getLogger(__name__).warning(
+        f'FedLSA trainer not available: {e}'
+    )
+
 __all__ = [
     'Trainer', 'Context', 'GeneralTorchTrainer', 'GeneralMultiModelTrainer',
     'wrap_pFedMeTrainer', 'wrap_DittoTrainer', 'FedEMTrainer',
     'wrap_fedprox_trainer', 'wrap_nbafl_trainer', 'wrap_nbafl_server',
     'wrap_Simple_tuning_Trainer', 'wrap_FedRepTrainer', 'BaseTrainer',
-    'GeneralTFTrainer'
+    'GeneralTFTrainer', 'FedLSATrainer'
 ]
+
+
+
