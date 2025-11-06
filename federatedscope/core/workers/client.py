@@ -230,8 +230,31 @@ class Client(BaseClient):
         To listen to the message and handle them accordingly (used for \
         distributed mode)
         """
+        # Buffer for messages received before ID assignment
+        pending_messages = []
+
         while True:
             msg = self.comm_manager.receive()
+
+            # In distributed mode, ensure ID is assigned before
+            # processing training messages
+            if self._mode == 'distributed' and self.ID == -1:
+                if msg.msg_type == 'assign_client_id':
+                    # Process ID assignment immediately
+                    self.msg_handlers[msg.msg_type](msg)
+                    # Process any pending messages after ID assignment
+                    for pending_msg in pending_messages:
+                        if self.state <= pending_msg.state:
+                            self.msg_handlers[pending_msg.msg_type](
+                                pending_msg)
+                    pending_messages.clear()
+                else:
+                    # Buffer other messages until ID is assigned
+                    pending_messages.append(msg)
+                    if msg.msg_type == 'finish':
+                        break
+                    continue
+
             if self.state <= msg.state:
                 self.msg_handlers[msg.msg_type](msg)
 

@@ -78,6 +78,11 @@ def update_logger(cfg, clear_before_add=False):
     root_logger.setLevel(logging_level)
 
     # ================ create outdir to save log, exp_config, models, etc,.
+    # Check if config is frozen and temporarily defrost if needed
+    is_frozen = cfg.is_frozen()
+    if is_frozen:
+        cfg.defrost()
+
     if cfg.outdir == "":
         cfg.outdir = os.path.join(os.getcwd(), "exp")
     if cfg.expname == "":
@@ -101,6 +106,10 @@ def update_logger(cfg, clear_before_add=False):
         cfg.outdir = outdir
     # if not, make directory with given name
     os.makedirs(cfg.outdir)
+
+    # Refreeze the config if it was frozen before
+    if is_frozen:
+        cfg.freeze()
 
     # create file handler which logs even debug messages
     fh = logging.FileHandler(os.path.join(cfg.outdir, 'exp_print.log'))

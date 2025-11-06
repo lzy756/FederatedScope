@@ -171,6 +171,10 @@ class Server(BaseServer):
         self.sample_client_num = int(self._cfg.federate.sample_client_num)
         self.join_in_client_num = 0
         self.join_in_info = dict()
+        # Add timestamp for tracking client join timeout
+        self.first_join_timestamp = None
+        # 5 minutes timeout for all clients to join
+        self.join_timeout_seconds = 300
         # the unseen clients indicate the ones that do not contribute to FL
         # process by training on their local data and uploading their local
         # model update. The splitting is useful to check participation
@@ -779,8 +783,22 @@ class Server(BaseServer):
                         self.dropout_num = 0
                 return self.cur_timestamp >= self.deadline_for_cur_round
             else:
-                return len(cur_buffer)+len(self.staled_msg_buffer) >= \
-                       min_received_num
+                # Check for potential issues with client IDs
+                received_count = len(cur_buffer) + len(self.staled_msg_buffer)
+                if received_count > 0 and received_count < min_received_num:
+                    # Log warning about received client IDs to help
+                    # diagnose issues
+                    received_ids = list(cur_buffer.keys())
+                    expected_ids = list(self.comm_manager.neighbors.keys())
+                    if -1 in received_ids:
+                        logger.warning(
+                            f'Round #{cur_round}: Received message from '
+                            f'client with ID=-1! This indicates a race '
+                            f'condition where the client sent results '
+                            f'before receiving its ID assignment. '
+                            f'Received from IDs: {received_ids}, '
+                            f'Expected IDs: {expected_ids}')
+                return received_count >= min_received_num
 
     def check_client_join_in(self):
         """
@@ -834,16 +852,17 @@ class Server(BaseServer):
                 self.deadline_for_cur_round = self.cur_timestamp + \
                                                self._cfg.asyn.time_budget
 
+            # Log before starting to avoid misleading log order
+            logger.info(
+                '----------- Starting training (Round #{:d}) -------------'.
+                format(self.state))
+
             # start feature engineering
             self.trigger_for_feat_engr(
                 self.broadcast_model_para, {
                     'msg_type': 'model_para',
                     'sample_client_num': self.sample_client_num
                 })
-
-            logger.info(
-                '----------- Starting training (Round #{:d}) -------------'.
-                format(self.state))
 
     def trigger_for_feat_engr(self,
                               trigger_train_func,
@@ -999,6 +1018,9 @@ class Server(BaseServer):
         Arguments:
             message: The received message
         """
+        # Record timestamp of first client join for timeout tracking
+        if self.first_join_timestamp is None:
+            self.first_join_timestamp = time.time()
 
         if 'info' in message.msg_type:
             sender, info = message.sender, message.content
@@ -1020,6 +1042,8 @@ class Server(BaseServer):
                             state=self.state,
                             timestamp=self.cur_timestamp,
                             content=str(sender)))
+                logger.info(
+                    f'Server: Assigned ID #{sender} to client at {address}')
             else:
                 self.comm_manager.add_neighbors(neighbor_id=sender,
                                                 address=address)
@@ -1032,6 +1056,21 @@ class Server(BaseServer):
                             state=self.state,
                             timestamp=self.cur_timestamp,
                             content=self._cfg.federate.join_in_info.copy()))
+
+        # Check for timeout
+        elapsed_time = time.time() - self.first_join_timestamp
+        if not self.check_client_join_in(
+        ) and elapsed_time > self.join_timeout_seconds:
+            logger.error(
+                f'Server: Timeout waiting for clients to join. Expected '
+                f'{self.client_num} clients, but only '
+                f'{self.join_in_client_num} joined after '
+                f'{elapsed_time:.1f} seconds. Joined client IDs: '
+                f'{list(self.comm_manager.neighbors.keys())}')
+            raise TimeoutError(
+                f'Only {self.join_in_client_num}/{self.client_num} '
+                f'clients joined after {self.join_timeout_seconds} '
+                f'seconds')
 
         self.trigger_for_start()
 
