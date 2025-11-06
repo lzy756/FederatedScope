@@ -1,5 +1,5 @@
-# FedLSA Configuration for Domain-Skewed Federated Learning
-# Dataset: Office-Caltech (or Digits, PACS)
+# FedLSA Low Memory Configuration for Server Deployment
+# Optimized to prevent OOM kills
 
 # Basic FL settings
 use_gpu: True
@@ -7,34 +7,34 @@ device: 0
 backend: 'torch'
 seed: 123
 
-# Federate settings
+# Federate settings - REDUCED CLIENT NUM
 federate:
   mode: 'standalone'
-  client_num: 20
-  total_round_num: 200
-  sample_client_num: 5
+  client_num: 20          # REDUCED from 100 to 20
+  total_round_num: 50
+  sample_client_num: 3    # REDUCED from 5 to 3
   method: 'fedlsa'
   make_global_eval: False
   share_local_model: False
   online_aggr: False
 
-# Data settings
+# Data settings - REDUCED BATCH SIZE
 data:
   root: '/home/liziyu/data/office_caltech_10'
   type: 'office_caltech'
-  splits: [0.8, 0.1, 0.1]  # train, val, test
-  batch_size: 8
+  splits: [0.8, 0.1, 0.1]
+  batch_size: 4           # REDUCED from 8 to 4
   shuffle: True
-  num_workers: 0
-  dirichlet_alpha: 0.1
+  num_workers: 0          # Keep 0 to avoid multiprocessing memory overhead
+  dirichlet_alpha: 0.5
 
 # Model settings
 model:
-  type: 'fedlsa_cnn'  # FedLSA paper model: 2 conv + 3 linear layers
+  type: 'fedlsa_cnn'
   hidden: 512
-  num_classes: 10  # 10 for Office-Caltech and Digits, 7 for PACS
+  num_classes: 10
   dropout: 0.0
-  out_channels: 10  # num_classes for classifier output
+  out_channels: 10
 
 # Training settings
 train:
@@ -64,21 +64,21 @@ early_stop:
   delta: 0.0
   improve_indicator_mode: 'best'
 
-# FedLSA specific settings
+# FedLSA specific settings - MEMORY OPTIMIZED
 fedlsa:
   use: True
 
   # Client-side parameters
-  lambda_com: 0.5  # Trade-off for compactness loss
-  tau: 0.1  # Temperature parameter
+  lambda_com: 0.5
+  tau: 0.1
   use_projector: True
   projector_input_dim: 512
-  projector_output_dim: 128
+  projector_output_dim: 64   # REDUCED from 128 to 64
   share_projector: True
 
-  # Server-side parameters
-  alpha_sep: 0.6  # Trade-off for separation loss
-  anchor_train_epochs: 5
+  # Server-side parameters - REDUCED ANCHOR TRAINING
+  alpha_sep: 0.6
+  anchor_train_epochs: 5     # REDUCED from 10 to 5
   anchor_lr: 0.001
 
 # Trainer type
@@ -86,26 +86,23 @@ trainer:
   type: 'fedlsa_trainer'
 
 # Output directory
-outdir: 'exp_fedlsa/office_caltech'
-expname: 'fedlsa_baseline'
+outdir: 'exp_fedlsa/office_caltech_lowmem'
+expname: 'fedlsa_lowmem'
 
 # Criterion
 criterion:
   type: 'CrossEntropyLoss'
 
-# Regularizer (not used in FedLSA)
+# Regularizer
 regularizer:
   type: ''
   mu: 0.0
 
-# Gradient
+# Gradient - ADD GRADIENT CLIPPING
 grad:
-  grad_clip: 5.0
+  grad_clip: 1.0           # REDUCED from 5.0 to 1.0
 
 # Logging
 verbose: 1
 print_decimal_digits: 6
-
-
-
 

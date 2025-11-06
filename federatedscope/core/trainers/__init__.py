@@ -24,13 +24,23 @@ except ImportError as e:
         f'FedLSA trainer not available: {e}'
     )
 
+# Import FedProto trainer to trigger registration
+try:
+    from federatedscope.core.trainers.trainer_FedProto import FedProtoTrainer
+except ImportError as e:
+    import logging
+    logging.getLogger(__name__).warning(
+        f'FedProto trainer not available: {e}'
+    )
+
 __all__ = [
     'Trainer', 'Context', 'GeneralTorchTrainer', 'GeneralMultiModelTrainer',
     'wrap_pFedMeTrainer', 'wrap_DittoTrainer', 'FedEMTrainer',
     'wrap_fedprox_trainer', 'wrap_nbafl_trainer', 'wrap_nbafl_server',
     'wrap_Simple_tuning_Trainer', 'wrap_FedRepTrainer', 'BaseTrainer',
-    'GeneralTFTrainer', 'FedLSATrainer'
+    'GeneralTFTrainer', 'FedLSATrainer', 'FedProtoTrainer'
 ]
+
 
 
 

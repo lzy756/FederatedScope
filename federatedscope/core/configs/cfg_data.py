@@ -26,6 +26,9 @@ def extend_data_cfg(cfg):
     # distributions of train/val/test set over clients will be kept
     # consistent during splitting
     cfg.data.cSBM_phi = [0.5, 0.5, 0.5]
+    cfg.data.dirichlet_alpha = 0.0  # Dirichlet concentration parameter for
+    # class heterogeneity. 0.0 = uniform split, 0.1 = highly heterogeneous,
+    # 0.5 = moderate heterogeneity, 1.0+ = more balanced
 
     cfg.data.transform = [
     ]  # transform for x, eg. [['ToTensor'], ['Normalize', {'mean': [
@@ -176,3 +179,4 @@ def assert_data_cfg(cfg):
 
 
 register_config("data", extend_data_cfg)
+
