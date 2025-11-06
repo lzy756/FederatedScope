@@ -350,6 +350,14 @@ class StandaloneRunner(BaseRunner):
                 resource_info=client_resource_info[client_id - 1]
                 if client_resource_info is not None else None)
 
+        if hasattr(self.server, 'link_clients'):
+            try:
+                self.server.link_clients(self.client)
+            except Exception as error:  # pragma: no cover
+                logger.warning(
+                    f'Linking clients to server fails with error `{error}`. '
+                    f'Skip linking step.')
+
         # in standalone mode, by default, we print the trainer info only
         # once for better logs readability
         trainer_representative = self.client[1].trainer

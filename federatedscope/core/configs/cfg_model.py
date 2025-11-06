@@ -23,6 +23,10 @@ def extend_model_cfg(cfg):
     cfg.model.num_item = 0
     cfg.model.num_user = 0
     cfg.model.input_shape = ()  # A tuple, e.g., (in_channel, h, w)
+    cfg.model.backbone = ''
+    cfg.model.backbone_config = CN(new_allowed=True)
+    cfg.model.distribution_hidden = []
+    cfg.model.distribution_temperature = 1.0
 
     # For tree-based model
     cfg.model.lambda_ = 0.1
