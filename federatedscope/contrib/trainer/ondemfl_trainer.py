@@ -272,6 +272,15 @@ class OnDemFLTrainer(GeneralTorchTrainer):
         grad_vec = torch.cat(grads).detach()
         return grad_vec
 
+    def get_model_para(self):
+        """Share only backbone parameters; keep predictor local."""
+        full_state = super().get_model_para()
+        return {
+            k: v
+            for k, v in full_state.items()
+            if not k.startswith('distribution_predictor.')
+        }
+
 
 def call_ondemfl_trainer(trainer_type):
     if trainer_type.lower() == 'ondemfl':

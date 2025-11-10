@@ -85,7 +85,8 @@ def _get_predictor_input_dim(task_model: nn.Module,
 
 
 def call_ondemfl_model(model_config, input_shape=None):
-    if model_config.type.lower() != 'ondemfl':
+    model_type = model_config.type.lower()
+    if model_type not in ['ondemfl', 'cross_domain_adaptive']:
         return None
 
     if not hasattr(model_config, 'backbone'):
@@ -100,9 +101,21 @@ def call_ondemfl_model(model_config, input_shape=None):
             cfg_to_merge = CN(cfg_to_merge)
         backbone_cfg.merge_from_other_cfg(cfg_to_merge)
 
-    if not hasattr(backbone_cfg, 'out_channels') and hasattr(
-            model_config, 'out_channels'):
-        backbone_cfg.out_channels = model_config.out_channels
+    def _maybe_copy(attr_name, target_name=None):
+        target_name = target_name or attr_name
+        if not hasattr(backbone_cfg, target_name) and hasattr(
+                model_config, attr_name):
+            setattr(backbone_cfg, target_name, getattr(model_config,
+                                                       attr_name))
+
+    _maybe_copy('out_channels')
+    _maybe_copy('hidden')
+    _maybe_copy('dropout')
+    _maybe_copy('num_classes', 'class_num')
+    _maybe_copy('in_channels')
+    _maybe_copy('h')
+    _maybe_copy('w')
+    _maybe_copy('use_bn')
 
     if input_shape is not None:
         input_shape = tuple(input_shape)
@@ -138,3 +151,4 @@ def call_ondemfl_model(model_config, input_shape=None):
 
 
 register_model('ondemfl', call_ondemfl_model)
+register_model('cross_domain_adaptive', call_ondemfl_model)

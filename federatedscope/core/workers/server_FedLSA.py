@@ -317,7 +317,7 @@ class FedLSAServer(Server):
             self.anchor_optimizer.step()
 
             # 每5轮或最后一轮打印日志
-            if epoch % 5 == 0 or epoch == self.anchor_train_epochs - 1:
+            if epoch % 1 == 0 or epoch == self.anchor_train_epochs - 1:
                 # 计算锚点间的平均距离（诊断信息）
                 with torch.no_grad():
                     # ⚠️ 重要：detach锚点，避免梯度累积导致显存泄漏
