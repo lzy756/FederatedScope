@@ -7,21 +7,21 @@ seed: 123
 federate:
   mode: 'standalone'
   client_num: 20
-  total_round_num: 300
-  sample_client_num: 5
+  total_round_num: 200
   method: 'cross_domain_adaptive'
-  make_global_eval: False
+  make_global_eval: True
   share_local_model: False
   online_aggr: False
 
 data:
-  root: 'data/office_caltech_10'
+  root: '/root/data/office_caltech_10'
   type: 'office_caltech'
   splits: [0.8, 0.1, 0.1]
-  batch_size: 4
+  batch_size: 8
   shuffle: True
   num_workers: 0
   dirichlet_alpha: 0.1
+  server_test_samples_per_class: 10  # Number of samples per class for server-side balanced test sets
 
 model:
   type: 'cross_domain_adaptive'
@@ -41,7 +41,7 @@ train:
     weight_decay: 0.0005
   scheduler:
     type: 'StepLR'
-    step_size: 30
+    step_size: 100
     gamma: 0.1
 
 eval:
@@ -62,16 +62,16 @@ fedlsa:
   tau: 0.1
   use_projector: True
   projector_input_dim: 512
-  projector_output_dim: 128
+  projector_output_dim: 256
   share_projector: True
-  alpha_sep: 0.6
-  anchor_train_epochs: 5
+  alpha_sep: 0.4
+  anchor_train_epochs: 100
   anchor_lr: 0.001
 
 ondemfl:
   enable: True
   pretrain_rounds: 150
-  ondemand_rounds: 150
+  ondemand_rounds: 50
   subset_size: 10
   weight_scheme: 'ratio_times_size'
   min_ratio: 1e-4
@@ -106,3 +106,5 @@ grad:
 
 # verbose: 1
 # print_decimal_digits: 6
+
+
