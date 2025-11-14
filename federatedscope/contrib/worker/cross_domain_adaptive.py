@@ -26,7 +26,21 @@ class CrossDomainAdaptiveServer(FedLSAServer):
     """Server that aligns semantic anchors with On-Demand client selection."""
 
     def __init__(self, *args, **kwargs):
+        # Handle data argument for server-side evaluation
+        # In standalone mode, if server has no data but make_global_eval is True,
+        # we need to provide a dummy data dict to pass the assertion in parent class
+        data_arg = kwargs.get('data', None)
+        cfg_arg = kwargs.get('config', args[1] if len(args) > 1 else None)
+
+        # If make_global_eval is True but data is None, create a placeholder
+        if cfg_arg and cfg_arg.federate.make_global_eval and data_arg is None:
+            # Create a minimal dummy data dict structure
+            # The actual test data will be loaded in _load_balanced_test_data()
+            kwargs['data'] = {'test': None}  # Placeholder that will be replaced
+
+        # Call parent constructor
         super().__init__(*args, **kwargs)
+
         cfg = self._cfg.ondemfl
         self._ondem_enabled = cfg.enable
         self._pretrain_rounds = cfg.pretrain_rounds
@@ -49,6 +63,15 @@ class CrossDomainAdaptiveServer(FedLSAServer):
                 logger.warning('total_round_num (%s) != pretrain (%s) + '
                                'ondemand (%s).', self.total_round_num,
                                cfg.pretrain_rounds, cfg.ondemand_rounds)
+
+        # Load balanced server-side test data for global evaluation
+        if self._cfg.federate.make_global_eval and self._cfg.data.type.lower() == 'office_caltech':
+            try:
+                self._load_balanced_test_data()
+            except Exception as e:
+                logger.warning(f"Failed to load balanced test data: {e}")
+                logger.warning("Server-side evaluation will be disabled or use default behavior")
+                # Don't fail initialization, just skip custom server evaluation
 
     def link_clients(self, clients):
         self._clients = {
@@ -343,6 +366,319 @@ class CrossDomainAdaptiveServer(FedLSAServer):
         self.sampler.change_state(chosen, 'working')
         return chosen
 
+    def _load_balanced_test_data(self):
+        """
+        Load balanced test datasets for server-side global evaluation.
+
+        Creates 4 balanced test sets (one per domain: amazon, webcam, dslr, caltech),
+        where each test set has equal number of samples from each class.
+        """
+        from federatedscope.cv.dataset.office_caltech import load_balanced_office_caltech_data
+        from torch.utils.data import DataLoader
+
+        logger.info("Loading balanced test datasets for server-side evaluation...")
+
+        # Get samples per class from config, default to 10
+        # Use try-except to handle if the config key doesn't exist
+        try:
+            samples_per_class = self._cfg.data.server_test_samples_per_class
+        except (AttributeError, KeyError):
+            samples_per_class = 10
+            logger.info(f"Using default samples_per_class={samples_per_class} for server test data")
+
+        # Load balanced test data for all domains
+        balanced_datasets = load_balanced_office_caltech_data(
+            root=self._cfg.data.root,
+            samples_per_class=samples_per_class,
+            transform=None,  # Will use default transform
+            seed=self._cfg.seed
+        )
+
+        # Create data loaders for each domain
+        self.test_data_loaders = {}
+        for domain, dataset in balanced_datasets.items():
+            loader = DataLoader(
+                dataset,
+                batch_size=self._cfg.data.batch_size,
+                shuffle=False,
+                num_workers=self._cfg.data.num_workers
+            )
+            self.test_data_loaders[domain] = loader
+
+        logger.info(f"Loaded balanced test datasets for {len(self.test_data_loaders)} domains: "
+                   f"{list(self.test_data_loaders.keys())}")
+
+    def eval(self):
+        """
+        Override eval to perform server-side evaluation on balanced test sets.
+
+        Evaluates the global model on each domain's balanced test set separately,
+        providing domain-specific performance metrics and weighted average.
+        """
+        # Check if we should perform custom server-side evaluation
+        if not (self._cfg.federate.make_global_eval and hasattr(self, 'test_data_loaders')):
+            # Fall back to default evaluation
+            super().eval()
+            return
+
+        # Check if test_data_loaders is empty or None
+        if not self.test_data_loaders:
+            logger.warning("test_data_loaders is empty, falling back to default evaluation")
+            super().eval()
+            return
+
+        # Check if trainer exists
+        if not hasattr(self, 'trainer') or self.trainer is None:
+            logger.warning("Server has no trainer, skipping server-side evaluation")
+            return
+
+        try:
+            # Perform domain-specific evaluation
+            logger.info("="*80)
+            logger.info(f"[Round {self.state}] Server-side Evaluation on Balanced Test Sets")
+            logger.info("="*80)
+
+            # Store results for each domain
+            domain_results = {}
+            domain_sizes = {}
+
+            for domain, test_loader in self.test_data_loaders.items():
+                # logger.info(f"Evaluating domain: {domain}")
+
+                # Check if loader has data
+                if len(test_loader.dataset) == 0:
+                    logger.warning(f"Domain {domain} has empty dataset, skipping")
+                    continue
+
+                # Temporarily set the test data for this domain
+                original_test_data = self.trainer.ctx.get('test_data')
+                original_test_loader = self.trainer.ctx.get('test_loader')
+                original_data = self.trainer.ctx.get('data')
+                original_cur_split = self.trainer.ctx.get('cur_split')
+
+                # Set test data with proper structure
+                # Use ReIterator to wrap the loader for compatibility with trainer
+                from federatedscope.core.auxiliaries.ReIterator import ReIterator
+
+                self.trainer.ctx.test_data = test_loader.dataset
+                self.trainer.ctx.test_loader = ReIterator(test_loader)
+                self.trainer.ctx.cur_split = 'test'
+
+                # CRITICAL: Set num_test_epoch and num_test_batch to ensure evaluation loop runs
+                # The trainer's _run_epoch and _run_batch use these to determine loop iterations
+                # Must handle None case as well as 0
+                if not hasattr(self.trainer.ctx, 'num_test_epoch') or self.trainer.ctx.num_test_epoch in [0, None]:
+                    self.trainer.ctx.num_test_epoch = 1
+
+                # Set num_test_batch - this is CRITICAL for the batch loop to run
+                if not hasattr(self.trainer.ctx, 'num_test_batch') or self.trainer.ctx.num_test_batch in [0, None]:
+                    self.trainer.ctx.num_test_batch = len(test_loader)
+
+                # Debug: verify data was set and check loader
+                # logger.info(f"Domain {domain}:")
+                # logger.info(f"  - test_data set: {self.trainer.ctx.get('test_data') is not None}")
+                # logger.info(f"  - test_loader set: {self.trainer.ctx.get('test_loader') is not None}")
+                # logger.info(f"  - test_data size: {len(self.trainer.ctx.get('test_data', []))}")
+                # logger.info(f"  - test_loader batches: {len(test_loader)}")
+                # logger.info(f"  - cur_split: {self.trainer.ctx.get('cur_split')}")
+                # logger.info(f"  - num_test_epoch: {self.trainer.ctx.get('num_test_epoch')}")
+                # logger.info(f"  - num_test_batch: {self.trainer.ctx.get('num_test_batch')}")
+                # logger.info(f"  - check_split result: {self.trainer.ctx.check_split('test', skip=True)}")
+
+                # Also set data dict if it's expected
+                if original_data is not None and hasattr(original_data, '__getitem__'):
+                    try:
+                        original_data['test'] = test_loader.dataset
+                    except (TypeError, KeyError):
+                        pass
+
+                # Run evaluation
+                try:
+                    test_metrics = self.trainer.evaluate(target_data_split_name='test')
+
+                    # Add dataset size to metrics for monitor formatting
+                    # Monitor expects '{split}_total' key
+                    if 'test_total' not in test_metrics:
+                        test_metrics['test_total'] = len(test_loader.dataset)
+
+                except Exception as e:
+                    logger.error(f"Evaluation failed for domain {domain}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Restore context before continuing
+                    if original_test_data is not None:
+                        self.trainer.ctx.test_data = original_test_data
+                    else:
+                        if 'test_data' in self.trainer.ctx:
+                            del self.trainer.ctx['test_data']
+
+                    if original_test_loader is not None:
+                        self.trainer.ctx.test_loader = original_test_loader
+                    else:
+                        if 'test_loader' in self.trainer.ctx:
+                            del self.trainer.ctx['test_loader']
+
+                    if original_cur_split is not None:
+                        self.trainer.ctx.cur_split = original_cur_split
+                    else:
+                        if 'cur_split' in self.trainer.ctx:
+                            del self.trainer.ctx['cur_split']
+
+                    if original_data is not None and hasattr(original_data, '__getitem__'):
+                        try:
+                            if original_test_data is not None:
+                                original_data['test'] = original_test_data
+                        except (TypeError, KeyError):
+                            pass
+                    continue
+
+                # Store domain size for weighted average
+                domain_sizes[domain] = len(test_loader.dataset)
+
+                # Extract accuracy (handle different metric formats)
+                acc = None
+                if 'test_acc' in test_metrics:
+                    acc = test_metrics['test_acc']
+                elif 'acc' in test_metrics:
+                    acc = test_metrics['acc']
+
+                domain_results[domain] = {
+                    'accuracy': acc,
+                    'metrics': test_metrics,
+                    'size': domain_sizes[domain]
+                }
+
+                # Format and log results
+                from federatedscope.core.auxiliaries.utils import merge_dict_of_results
+                formatted_eval_res = self._monitor.format_eval_res(
+                    test_metrics,
+                    rnd=self.state,
+                    role=f'Server #{domain}',
+                    forms=self._cfg.eval.report,
+                    return_raw=True
+                )
+
+                # Update best results with domain tag
+                self._monitor.update_best_result(
+                    self.best_results,
+                    formatted_eval_res['Results_raw'],
+                    results_type=f"server_global_eval_{domain}"
+                )
+
+                # Merge with history
+                self.history_results = merge_dict_of_results(
+                    self.history_results, formatted_eval_res
+                )
+
+                # Restore original test data
+                if original_test_data is not None:
+                    self.trainer.ctx.test_data = original_test_data
+                else:
+                    if 'test_data' in self.trainer.ctx:
+                        del self.trainer.ctx['test_data']
+
+                if original_test_loader is not None:
+                    self.trainer.ctx.test_loader = original_test_loader
+                else:
+                    if 'test_loader' in self.trainer.ctx:
+                        del self.trainer.ctx['test_loader']
+
+                if original_cur_split is not None:
+                    self.trainer.ctx.cur_split = original_cur_split
+                else:
+                    if 'cur_split' in self.trainer.ctx:
+                        del self.trainer.ctx['cur_split']
+
+                if original_data is not None and hasattr(original_data, '__getitem__'):
+                    try:
+                        if original_test_data is not None:
+                            original_data['test'] = original_test_data
+                    except (TypeError, KeyError):
+                        pass
+
+            # Check if we got any results
+            if not domain_results:
+                logger.warning("No domain evaluation results obtained, falling back to default evaluation")
+                super().eval()
+                return
+
+            # Calculate and log weighted average accuracy
+            logger.info("-"*80)
+            logger.info("Domain-specific Test Results:")
+            logger.info("-"*80)
+
+            total_samples = sum(domain_sizes.values())
+
+            # Collect all metric names from the first domain
+            first_domain_metrics = next(iter(domain_results.values()))['metrics']
+            metric_names = [key for key in first_domain_metrics.keys()
+                          if key.startswith('test_') and not key.endswith('_total')]
+
+            # Calculate weighted average for all metrics
+            weighted_metrics = {}
+            for metric_name in metric_names:
+                weighted_value = 0.0
+                for domain in domain_results.keys():
+                    result = domain_results[domain]
+                    size = result['size']
+                    weight = size / total_samples if total_samples > 0 else 0
+                    metric_value = result['metrics'].get(metric_name, 0.0)
+                    weighted_value += metric_value * weight
+                weighted_metrics[metric_name] = weighted_value
+
+            # Log accuracy for each domain
+            for domain in sorted(domain_results.keys()):
+                result = domain_results[domain]
+                acc = result['accuracy']
+                size = result['size']
+                weight = size / total_samples if total_samples > 0 else 0
+
+                if acc is not None:
+                    logger.info(f"  {domain:12s}: Acc = {acc:.4f} | Samples = {size:4d} | Weight = {weight:.3f}")
+                else:
+                    logger.info(f"  {domain:12s}: Acc = N/A    | Samples = {size:4d} | Weight = {weight:.3f}")
+
+            logger.info("-"*80)
+            weighted_acc = weighted_metrics.get('test_acc', 0.0)
+            logger.info(f"  {'Weighted Avg':12s}: Acc = {weighted_acc:.4f} | Total Samples = {total_samples}")
+            logger.info("="*80)
+
+            # Store weighted average in best_results
+            # Only include standard metric keys that monitor expects
+            weighted_results = {
+                'test_total': total_samples,
+            }
+            # Add all weighted metrics
+            weighted_results.update(weighted_metrics)
+
+            # Format weighted average results
+            formatted_weighted_res = self._monitor.format_eval_res(
+                weighted_results,
+                rnd=self.state,
+                role='Server #Weighted_Avg',
+                forms=self._cfg.eval.report,
+                return_raw=True
+            )
+
+            # Update best results for weighted average
+            self._monitor.update_best_result(
+                self.best_results,
+                formatted_weighted_res['Results_raw'],
+                results_type="server_global_eval_weighted_avg"
+            )
+
+            # Merge with history
+            self.history_results = merge_dict_of_results(
+                self.history_results, formatted_weighted_res
+            )
+
+        except Exception as e:
+            logger.error(f"Server-side evaluation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            logger.info("Falling back to default evaluation")
+            super().eval()
+
 
 def call_cross_domain_adaptive_worker(method: str):
     if method.lower() == 'cross_domain_adaptive':
@@ -354,3 +690,4 @@ def call_cross_domain_adaptive_worker(method: str):
 
 
 register_worker('cross_domain_adaptive', call_cross_domain_adaptive_worker)
+
