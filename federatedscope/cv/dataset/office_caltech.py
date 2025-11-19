@@ -223,3 +223,106 @@ def load_office_caltech_domain_data(root,
         'test': test_dataset
     }
 
+
+def load_balanced_office_caltech_data(root,
+                                       samples_per_class=10,
+                                       transform=None,
+                                       seed=123):
+    """
+    Load balanced test datasets for server-side evaluation.
+
+    Creates balanced test sets for each domain where each class has
+    exactly the same number of samples.
+
+    Args:
+        root: root directory of the dataset
+        samples_per_class: number of samples per class (default: 10)
+        transform: transform to apply to images
+        seed: random seed for sampling
+
+    Returns:
+        Dictionary mapping domain names to balanced datasets
+        {'amazon': Dataset, 'webcam': Dataset, 'dslr': Dataset, 'caltech': Dataset}
+    """
+    np.random.seed(seed)
+
+    if transform is None:
+        transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                               std=[0.229, 0.224, 0.225])
+        ])
+
+    balanced_datasets = {}
+
+    for domain in OfficeCaltech.DOMAINS:
+        # Load full test dataset for this domain
+        try:
+            full_test_dataset = OfficeCaltech(
+                root=root,
+                domain=domain,
+                split='test',
+                transform=transform,
+                seed=seed
+            )
+
+            # Sample balanced subset
+            balanced_images = []
+            balanced_labels = []
+
+            for class_idx in range(len(OfficeCaltech.CLASSES)):
+                # Find all samples of this class
+                class_indices = [i for i, label in enumerate(full_test_dataset.targets)
+                                if label == class_idx]
+
+                if len(class_indices) == 0:
+                    logger.warning(f"No samples found for class {class_idx} in domain {domain}")
+                    continue
+
+                # Sample exactly samples_per_class samples (or all if less available)
+                n_samples = min(samples_per_class, len(class_indices))
+                sampled_indices = np.random.choice(class_indices, size=n_samples, replace=False)
+
+                for idx in sampled_indices:
+                    balanced_images.append(full_test_dataset.data[idx])
+                    balanced_labels.append(full_test_dataset.targets[idx])
+
+            # Create a simple dataset wrapper
+            class BalancedDataset(Dataset):
+                def __init__(self, images, labels, transform):
+                    self.data = images
+                    self.targets = labels
+                    self.transform = transform
+
+                def __len__(self):
+                    return len(self.data)
+
+                def __getitem__(self, idx):
+                    img_path = self.data[idx]
+                    label = self.targets[idx]
+
+                    try:
+                        image = Image.open(img_path).convert('RGB')
+                    except Exception as e:
+                        logger.error(f"Error loading image {img_path}: {e}")
+                        image = Image.new('RGB', (224, 224), color='white')
+
+                    if self.transform is not None:
+                        image = self.transform(image)
+
+                    return image, label
+
+            balanced_dataset = BalancedDataset(balanced_images, balanced_labels, transform)
+            balanced_datasets[domain] = balanced_dataset
+
+            logger.info(f"Created balanced test set for {domain}: {len(balanced_dataset)} samples "
+                       f"({len(balanced_dataset) // len(OfficeCaltech.CLASSES)} per class)")
+
+        except Exception as e:
+            logger.warning(f"Failed to create balanced dataset for domain {domain}: {e}")
+            continue
+
+    return balanced_datasets
+
+
