@@ -24,7 +24,7 @@ data:
   type: 'office_caltech'
   splits: [0.8, 0.1, 0.1]  # train, val, test
   dirichlet_alpha: 0.1  # Same heterogeneity as cross_domain_adaptive
-  server_test_samples_per_class: 10  # Number of samples per class for server-side balanced test sets
+  server_test_samples_per_class: 20  # 20 samples/class * 10 classes = 200 samples/domain
 
 # DataLoader settings
 dataloader:
