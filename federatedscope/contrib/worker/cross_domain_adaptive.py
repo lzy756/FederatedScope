@@ -372,6 +372,9 @@ class CrossDomainAdaptiveServer(FedLSAServer):
 
         Creates 4 balanced test sets (one per domain: amazon, webcam, dslr, caltech),
         where each test set has equal number of samples from each class.
+
+        These test sets are held-out and excluded from client training/validation/test data
+        to prevent data leakage.
         """
         from federatedscope.cv.dataset.office_caltech import load_balanced_office_caltech_data
         from torch.utils.data import DataLoader
@@ -379,7 +382,6 @@ class CrossDomainAdaptiveServer(FedLSAServer):
         logger.info("Loading balanced test datasets for server-side evaluation...")
 
         # Get samples per class from config, default to 10
-        # Use try-except to handle if the config key doesn't exist
         try:
             samples_per_class = self._cfg.data.server_test_samples_per_class
         except (AttributeError, KeyError):
@@ -387,21 +389,24 @@ class CrossDomainAdaptiveServer(FedLSAServer):
             logger.info(f"Using default samples_per_class={samples_per_class} for server test data")
 
         # Load balanced test data for all domains
-        balanced_datasets = load_balanced_office_caltech_data(
+        result = load_balanced_office_caltech_data(
             root=self._cfg.data.root,
             samples_per_class=samples_per_class,
             transform=None,  # Will use default transform
             seed=self._cfg.seed
         )
 
+        balanced_datasets = result['datasets']
+        self.server_held_out_indices = result['excluded_indices']
+
         # Create data loaders for each domain
         self.test_data_loaders = {}
         for domain, dataset in balanced_datasets.items():
             loader = DataLoader(
                 dataset,
-                batch_size=self._cfg.data.batch_size,
+                batch_size=self._cfg.dataloader.batch_size,
                 shuffle=False,
-                num_workers=self._cfg.data.num_workers
+                num_workers=self._cfg.dataloader.num_workers
             )
             self.test_data_loaders[domain] = loader
 
@@ -417,14 +422,13 @@ class CrossDomainAdaptiveServer(FedLSAServer):
         """
         # Check if we should perform custom server-side evaluation
         if not (self._cfg.federate.make_global_eval and hasattr(self, 'test_data_loaders')):
-            # Fall back to default evaluation
-            super().eval()
+            # Skip evaluation if no test data loaders
+            logger.info("Skipping server-side evaluation (test_data_loaders not available)")
             return
 
         # Check if test_data_loaders is empty or None
         if not self.test_data_loaders:
-            logger.warning("test_data_loaders is empty, falling back to default evaluation")
-            super().eval()
+            logger.warning("test_data_loaders is empty, skipping server-side evaluation")
             return
 
         # Check if trainer exists
@@ -598,8 +602,7 @@ class CrossDomainAdaptiveServer(FedLSAServer):
 
             # Check if we got any results
             if not domain_results:
-                logger.warning("No domain evaluation results obtained, falling back to default evaluation")
-                super().eval()
+                logger.warning("No domain evaluation results obtained, skipping evaluation")
                 return
 
             # Calculate and log weighted average accuracy
@@ -676,8 +679,7 @@ class CrossDomainAdaptiveServer(FedLSAServer):
             logger.error(f"Server-side evaluation failed: {e}")
             import traceback
             traceback.print_exc()
-            logger.info("Falling back to default evaluation")
-            super().eval()
+            logger.warning("Skipping server-side evaluation due to error")
 
 
 def call_cross_domain_adaptive_worker(method: str):
