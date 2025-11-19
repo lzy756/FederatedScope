@@ -14,6 +14,7 @@ def extend_model_cfg(cfg):
     cfg.model.use_bias = True
     cfg.model.task = 'node'
     cfg.model.hidden = 256
+    cfg.model.num_classes = 10  # Number of classes for classification tasks
     cfg.model.dropout = 0.5
     cfg.model.in_channels = 0  # If 0, model will be built by data.shape
     cfg.model.out_channels = 1

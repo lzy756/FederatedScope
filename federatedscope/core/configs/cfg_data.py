@@ -29,6 +29,8 @@ def extend_data_cfg(cfg):
     cfg.data.dirichlet_alpha = 0.0  # Dirichlet concentration parameter for
     # class heterogeneity. 0.0 = uniform split, 0.1 = highly heterogeneous,
     # 0.5 = moderate heterogeneity, 1.0+ = more balanced
+    cfg.data.server_test_samples_per_class = 10  # Number of samples per class
+    # for server-side balanced test sets (used in domain-specific evaluation)
 
     cfg.data.transform = [
     ]  # transform for x, eg. [['ToTensor'], ['Normalize', {'mean': [

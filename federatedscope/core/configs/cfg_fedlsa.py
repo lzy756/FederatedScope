@@ -73,8 +73,8 @@ def extend_fedlsa_cfg(cfg):
     # FedLSA的模型配置
     # ---------------------------------------------------------------------- #
     # 类别数量 (论文中的C，用于锚点初始化)
-    if not hasattr(cfg.model, 'num_classes'):
-        cfg.model.num_classes = 10
+    # Note: This is handled by the model config, we just document it here
+    # cfg.model.num_classes should be set by the model configuration
 
     # ---------------------------------------------------------------------- #
     # Trainer和Worker配置

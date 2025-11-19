@@ -17,11 +17,13 @@ data:
   root: '/root/data/office_caltech_10'
   type: 'office_caltech'
   splits: [0.8, 0.1, 0.1]
+  dirichlet_alpha: 0.1
+  server_test_samples_per_class: 10  # Number of samples per class for server-side balanced test sets
+
+dataloader:
   batch_size: 8
   shuffle: True
   num_workers: 0
-  dirichlet_alpha: 0.1
-  server_test_samples_per_class: 10  # Number of samples per class for server-side balanced test sets
 
 model:
   type: 'cross_domain_adaptive'
