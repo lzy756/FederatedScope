@@ -232,7 +232,8 @@ def load_balanced_office_caltech_data(root,
     Load balanced test datasets for server-side evaluation.
 
     Creates balanced test sets for each domain where each class has
-    exactly the same number of samples.
+    exactly the same number of samples. Samples from entire dataset
+    to ensure sufficient data for each class.
 
     Args:
         root: root directory of the dataset
@@ -257,15 +258,39 @@ def load_balanced_office_caltech_data(root,
     balanced_datasets = {}
 
     for domain in OfficeCaltech.DOMAINS:
-        # Load full test dataset for this domain
         try:
-            full_test_dataset = OfficeCaltech(
-                root=root,
-                domain=domain,
-                split='test',
-                transform=transform,
-                seed=seed
-            )
+            # Load all data from this domain (not split into train/val/test)
+            domain_dir = osp.join(root, domain)
+
+            if not osp.exists(domain_dir):
+                logger.warning(f"Domain directory not found: {domain_dir}")
+                continue
+
+            all_images = []
+            all_labels = []
+
+            # Load all images from each class
+            for class_idx, class_name in enumerate(OfficeCaltech.CLASSES):
+                class_dir = osp.join(domain_dir, class_name)
+
+                if not osp.exists(class_dir):
+                    logger.warning(f"Class directory not found: {class_dir}")
+                    continue
+
+                # Get all image files
+                image_files = [
+                    f for f in os.listdir(class_dir)
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                ]
+
+                for img_file in image_files:
+                    img_path = osp.join(class_dir, img_file)
+                    all_images.append(img_path)
+                    all_labels.append(class_idx)
+
+            if len(all_images) == 0:
+                logger.warning(f"No images found in {domain_dir}")
+                continue
 
             # Sample balanced subset
             balanced_images = []
@@ -273,20 +298,27 @@ def load_balanced_office_caltech_data(root,
 
             for class_idx in range(len(OfficeCaltech.CLASSES)):
                 # Find all samples of this class
-                class_indices = [i for i, label in enumerate(full_test_dataset.targets)
+                class_indices = [i for i, label in enumerate(all_labels)
                                 if label == class_idx]
 
                 if len(class_indices) == 0:
-                    logger.warning(f"No samples found for class {class_idx} in domain {domain}")
+                    logger.warning(f"No samples found for class {class_idx} ({OfficeCaltech.CLASSES[class_idx]}) in domain {domain}")
                     continue
 
-                # Sample exactly samples_per_class samples (or all if less available)
-                n_samples = min(samples_per_class, len(class_indices))
+                if len(class_indices) < samples_per_class:
+                    logger.warning(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
+                                 f"only {len(class_indices)} samples available, need {samples_per_class}. "
+                                 f"Using all available samples.")
+                    n_samples = len(class_indices)
+                else:
+                    n_samples = samples_per_class
+
+                # Sample without replacement
                 sampled_indices = np.random.choice(class_indices, size=n_samples, replace=False)
 
                 for idx in sampled_indices:
-                    balanced_images.append(full_test_dataset.data[idx])
-                    balanced_labels.append(full_test_dataset.targets[idx])
+                    balanced_images.append(all_images[idx])
+                    balanced_labels.append(all_labels[idx])
 
             # Create a simple dataset wrapper
             class BalancedDataset(Dataset):
@@ -316,13 +348,21 @@ def load_balanced_office_caltech_data(root,
             balanced_dataset = BalancedDataset(balanced_images, balanced_labels, transform)
             balanced_datasets[domain] = balanced_dataset
 
-            logger.info(f"Created balanced test set for {domain}: {len(balanced_dataset)} samples "
-                       f"({len(balanced_dataset) // len(OfficeCaltech.CLASSES)} per class)")
+            # Log per-class statistics
+            class_counts = {}
+            for label in balanced_labels:
+                class_counts[label] = class_counts.get(label, 0) + 1
+
+            logger.info(f"Created balanced test set for {domain}: {len(balanced_dataset)} samples")
+            logger.info(f"  Per-class distribution: {dict(sorted(class_counts.items()))}")
 
         except Exception as e:
             logger.warning(f"Failed to create balanced dataset for domain {domain}: {e}")
+            import traceback
+            traceback.print_exc()
             continue
 
     return balanced_datasets
+
 
 
