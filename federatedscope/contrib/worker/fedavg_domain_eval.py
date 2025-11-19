@@ -208,12 +208,15 @@ class FedAvgDomainEvalServer(Server):
                     return_raw=True
                 )
 
-                # Update best results with domain tag
-                self._monitor.update_best_result(
-                    self.best_results,
-                    formatted_eval_res['Results_raw'],
-                    results_type=f"server_global_eval_{domain}"
-                )
+                # Update best results with domain tag (only if results are not empty)
+                if formatted_eval_res.get('Results_raw'):
+                    self._monitor.update_best_result(
+                        self.best_results,
+                        formatted_eval_res['Results_raw'],
+                        results_type=f"server_global_eval_{domain}"
+                    )
+                else:
+                    logger.warning(f"Empty evaluation results for domain {domain}, skipping best result update")
 
                 # Merge with history
                 self.history_results = merge_dict_of_results(
@@ -328,12 +331,15 @@ class FedAvgDomainEvalServer(Server):
             return_raw=True
         )
 
-        # Update best results for weighted average
-        self._monitor.update_best_result(
-            self.best_results,
-            formatted_weighted_res['Results_raw'],
-            results_type="server_global_eval_weighted"
-        )
+        # Update best results for weighted average (only if results are not empty)
+        if formatted_weighted_res.get('Results_raw'):
+            self._monitor.update_best_result(
+                self.best_results,
+                formatted_weighted_res['Results_raw'],
+                results_type="server_global_eval_weighted"
+            )
+        else:
+            logger.warning("Empty weighted evaluation results, skipping best result update")
 
         # Merge with history
         from federatedscope.core.auxiliaries.utils import merge_dict_of_results

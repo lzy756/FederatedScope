@@ -78,3 +78,4 @@ def assert_model_cfg(cfg):
 
 
 register_config("model", extend_model_cfg)
+
