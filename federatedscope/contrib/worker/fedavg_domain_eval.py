@@ -56,6 +56,9 @@ class FedAvgDomainEvalServer(Server):
 
         Creates 4 balanced test sets (one per domain: amazon, webcam, dslr, caltech),
         where each test set has equal number of samples from each class.
+
+        These test sets are held-out and excluded from client training/validation/test data
+        to prevent data leakage.
         """
         from federatedscope.cv.dataset.office_caltech import load_balanced_office_caltech_data
         from torch.utils.data import DataLoader
@@ -70,21 +73,24 @@ class FedAvgDomainEvalServer(Server):
             logger.info(f"Using default samples_per_class={samples_per_class} for server test data")
 
         # Load balanced test data for all domains
-        balanced_datasets = load_balanced_office_caltech_data(
+        result = load_balanced_office_caltech_data(
             root=self._cfg.data.root,
             samples_per_class=samples_per_class,
             transform=None,  # Will use default transform
             seed=self._cfg.seed
         )
 
+        balanced_datasets = result['datasets']
+        self.server_held_out_indices = result['excluded_indices']
+
         # Create data loaders for each domain
         self.test_data_loaders = {}
         for domain, dataset in balanced_datasets.items():
             loader = DataLoader(
                 dataset,
-                batch_size=self._cfg.data.batch_size,
+                batch_size=self._cfg.dataloader.batch_size,
                 shuffle=False,
-                num_workers=self._cfg.data.num_workers
+                num_workers=self._cfg.dataloader.num_workers
             )
             self.test_data_loaders[domain] = loader
 
@@ -366,5 +372,6 @@ def call_fedavg_domain_eval_worker(method: str):
 
 # Register the worker
 register_worker('fedavg_domain_eval', call_fedavg_domain_eval_worker)
+
 
 

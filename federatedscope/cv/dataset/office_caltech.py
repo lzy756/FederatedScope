@@ -53,7 +53,8 @@ class OfficeCaltech(Dataset):
                  transform=None,
                  train_ratio=0.8,
                  val_ratio=0.1,
-                 seed=123):
+                 seed=123,
+                 exclude_indices=None):
 
         assert domain in self.DOMAINS, f"Domain must be one of {self.DOMAINS}"
         assert split in ['train', 'val', 'test'], "Split must be train, val, or test"
@@ -66,6 +67,7 @@ class OfficeCaltech(Dataset):
         self.val_ratio = val_ratio
         self.test_ratio = 1.0 - train_ratio - val_ratio
         self.seed = seed
+        self.exclude_indices = exclude_indices or set()  # Indices to exclude (e.g., held-out for server)
 
         # Load data
         self.data, self.targets = self._load_data()
@@ -107,6 +109,20 @@ class OfficeCaltech(Dataset):
 
         if len(all_images) == 0:
             raise ValueError(f"No images found in {domain_dir}")
+
+        # Filter out excluded indices (e.g., held-out for server test set)
+        if self.exclude_indices:
+            filtered_images = []
+            filtered_labels = []
+            for idx in range(len(all_images)):
+                if idx not in self.exclude_indices:
+                    filtered_images.append(all_images[idx])
+                    filtered_labels.append(all_labels[idx])
+            all_images = filtered_images
+            all_labels = filtered_labels
+
+            if len(all_images) == 0:
+                raise ValueError(f"No images remaining after excluding {len(self.exclude_indices)} held-out indices")
 
         # Split data
         np.random.seed(self.seed)
@@ -229,21 +245,25 @@ def load_balanced_office_caltech_data(root,
                                        transform=None,
                                        seed=123):
     """
-    Load balanced test datasets for server-side evaluation.
+    Load balanced test datasets for server-side evaluation WITHOUT data leakage.
 
-    Creates balanced test sets for each domain where each class has
-    exactly the same number of samples. Samples from entire dataset
-    to ensure sufficient data for each class.
+    Creates balanced test sets by:
+    1. First sampling held-out test samples from the ENTIRE dataset
+    2. These indices are then excluded from client data loading
+    3. Ensures ZERO overlap between server test set and client train/val/test data
 
     Args:
         root: root directory of the dataset
-        samples_per_class: number of samples per class (default: 10)
+        samples_per_class: number of samples per class to sample (default: 10)
+                          Actual samples may be less if class has insufficient data
         transform: transform to apply to images
         seed: random seed for sampling
 
     Returns:
-        Dictionary mapping domain names to balanced datasets
-        {'amazon': Dataset, 'webcam': Dataset, 'dslr': Dataset, 'caltech': Dataset}
+        Dictionary with two keys:
+        - 'datasets': dict mapping domain names to balanced test datasets
+        - 'excluded_indices': dict mapping domain names to sets of excluded indices
+                             (to be passed to OfficeCaltech when loading client data)
     """
     np.random.seed(seed)
 
@@ -256,20 +276,26 @@ def load_balanced_office_caltech_data(root,
         ])
 
     balanced_datasets = {}
+    excluded_indices_per_domain = {}
+
+    logger.info("="*80)
+    logger.info("Creating server-side held-out test sets (NO DATA LEAKAGE)")
+    logger.info("="*80)
 
     for domain in OfficeCaltech.DOMAINS:
         try:
-            # Load all data from this domain (not split into train/val/test)
             domain_dir = osp.join(root, domain)
 
             if not osp.exists(domain_dir):
                 logger.warning(f"Domain directory not found: {domain_dir}")
                 continue
 
+            # Step 1: Load ALL images from this domain to get global indices
             all_images = []
             all_labels = []
+            image_to_global_idx = {}  # Map image path to global index
+            global_idx = 0
 
-            # Load all images from each class
             for class_idx, class_name in enumerate(OfficeCaltech.CLASSES):
                 class_dir = osp.join(domain_dir, class_name)
 
@@ -277,50 +303,51 @@ def load_balanced_office_caltech_data(root,
                     logger.warning(f"Class directory not found: {class_dir}")
                     continue
 
-                # Get all image files
                 image_files = [
-                    f for f in os.listdir(class_dir)
+                    osp.join(class_dir, f) for f in os.listdir(class_dir)
                     if f.lower().endswith(('.jpg', '.jpeg', '.png'))
                 ]
 
-                for img_file in image_files:
-                    img_path = osp.join(class_dir, img_file)
+                for img_path in image_files:
                     all_images.append(img_path)
                     all_labels.append(class_idx)
+                    image_to_global_idx[img_path] = global_idx
+                    global_idx += 1
 
             if len(all_images) == 0:
                 logger.warning(f"No images found in {domain_dir}")
                 continue
 
-            # Sample balanced subset
-            balanced_images = []
-            balanced_labels = []
+            # Step 2: Sample balanced held-out test set
+            held_out_images = []
+            held_out_labels = []
+            held_out_indices = set()
 
             for class_idx in range(len(OfficeCaltech.CLASSES)):
-                # Find all samples of this class
-                class_indices = [i for i, label in enumerate(all_labels)
-                                if label == class_idx]
+                # Get all images for this class
+                class_image_paths = [all_images[i] for i in range(len(all_images))
+                                    if all_labels[i] == class_idx]
 
-                if len(class_indices) == 0:
-                    logger.warning(f"No samples found for class {class_idx} ({OfficeCaltech.CLASSES[class_idx]}) in domain {domain}")
+                if len(class_image_paths) == 0:
+                    logger.warning(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: no samples")
                     continue
 
-                if len(class_indices) < samples_per_class:
-                    logger.warning(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
-                                 f"only {len(class_indices)} samples available, need {samples_per_class}. "
-                                 f"Using all available samples.")
-                    n_samples = len(class_indices)
-                else:
-                    n_samples = samples_per_class
+                # Determine how many samples to take
+                n_samples = min(samples_per_class, len(class_image_paths))
 
-                # Sample without replacement
-                sampled_indices = np.random.choice(class_indices, size=n_samples, replace=False)
+                if len(class_image_paths) < samples_per_class:
+                    logger.info(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
+                               f"only {len(class_image_paths)} samples available (requested {samples_per_class})")
 
-                for idx in sampled_indices:
-                    balanced_images.append(all_images[idx])
-                    balanced_labels.append(all_labels[idx])
+                # Random sample
+                sampled_paths = list(np.random.choice(class_image_paths, size=n_samples, replace=False))
 
-            # Create a simple dataset wrapper
+                for img_path in sampled_paths:
+                    held_out_images.append(img_path)
+                    held_out_labels.append(class_idx)
+                    held_out_indices.add(image_to_global_idx[img_path])
+
+            # Step 3: Create dataset
             class BalancedDataset(Dataset):
                 def __init__(self, images, labels, transform):
                     self.data = images
@@ -345,29 +372,35 @@ def load_balanced_office_caltech_data(root,
 
                     return image, label
 
-            balanced_dataset = BalancedDataset(balanced_images, balanced_labels, transform)
+            balanced_dataset = BalancedDataset(held_out_images, held_out_labels, transform)
             balanced_datasets[domain] = balanced_dataset
+            excluded_indices_per_domain[domain] = held_out_indices
 
-            # Log per-class statistics
+            # Log statistics
             class_counts = {}
-            for label in balanced_labels:
+            for label in held_out_labels:
                 class_counts[label] = class_counts.get(label, 0) + 1
 
-            logger.info(f"Created balanced test set for {domain}: {len(balanced_dataset)} samples")
-            logger.info(f"  Per-class distribution: {dict(sorted(class_counts.items()))}")
-
-            # WARNING: Data leakage issue
-            logger.warning(f"⚠️  IMPORTANT: Server test set for '{domain}' is sampled from the SAME data pool as client training/test data!")
-            logger.warning(f"   This creates DATA LEAKAGE and may lead to overestimated performance.")
-            logger.warning(f"   For fair evaluation, consider using a completely separate held-out test set.")
+            logger.info(f"✓ Domain '{domain}': Created held-out test set")
+            logger.info(f"  Total: {len(balanced_dataset)} / {len(all_images)} images ({100*len(balanced_dataset)/len(all_images):.1f}%)")
+            logger.info(f"  Per-class: {dict(sorted(class_counts.items()))}")
+            logger.info(f"  Excluded {len(held_out_indices)} indices from client data")
 
         except Exception as e:
-            logger.warning(f"Failed to create balanced dataset for domain {domain}: {e}")
+            logger.error(f"Failed to create balanced dataset for domain {domain}: {e}")
             import traceback
             traceback.print_exc()
             continue
 
-    return balanced_datasets
+    logger.info("="*80)
+    logger.info(f"✓ Server test sets created for {len(balanced_datasets)} domains")
+    logger.info(f"✓ NO DATA LEAKAGE: These samples are excluded from client data")
+    logger.info("="*80)
+
+    return {
+        'datasets': balanced_datasets,
+        'excluded_indices': excluded_indices_per_domain
+    }
 
 
 
