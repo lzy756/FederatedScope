@@ -100,14 +100,13 @@ class FedAvgDomainEvalServer(Server):
         """
         # Check if we should perform custom server-side evaluation
         if not (self._cfg.federate.make_global_eval and hasattr(self, 'test_data_loaders')):
-            # Fall back to default evaluation
-            super().eval()
+            # Fall back to default evaluation - but skip if no data
+            logger.info("Skipping server-side evaluation (test_data_loaders not available)")
             return
 
         # Check if test_data_loaders is empty or None
         if not self.test_data_loaders:
-            logger.warning("test_data_loaders is empty, falling back to default evaluation")
-            super().eval()
+            logger.warning("test_data_loaders is empty, skipping server-side evaluation")
             return
 
         # Check if trainer exists
@@ -231,8 +230,7 @@ class FedAvgDomainEvalServer(Server):
 
             # Check if we got any results
             if not domain_results:
-                logger.warning("No domain evaluation results obtained, falling back to default evaluation")
-                super().eval()
+                logger.warning("No domain evaluation results obtained, skipping evaluation")
                 return
 
             # Calculate and log weighted average accuracy
@@ -242,8 +240,8 @@ class FedAvgDomainEvalServer(Server):
             logger.error(f"Error during domain-specific evaluation: {e}")
             import traceback
             traceback.print_exc()
-            # Fall back to default evaluation
-            super().eval()
+            # Skip evaluation on error instead of falling back
+            logger.warning("Skipping server-side evaluation due to error")
 
     def _restore_trainer_context(self, original_test_data, original_test_loader,
                                  original_cur_split, original_data):
@@ -368,4 +366,5 @@ def call_fedavg_domain_eval_worker(method: str):
 
 # Register the worker
 register_worker('fedavg_domain_eval', call_fedavg_domain_eval_worker)
+
 
