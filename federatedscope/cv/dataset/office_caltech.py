@@ -356,6 +356,11 @@ def load_balanced_office_caltech_data(root,
             logger.info(f"Created balanced test set for {domain}: {len(balanced_dataset)} samples")
             logger.info(f"  Per-class distribution: {dict(sorted(class_counts.items()))}")
 
+            # WARNING: Data leakage issue
+            logger.warning(f"⚠️  IMPORTANT: Server test set for '{domain}' is sampled from the SAME data pool as client training/test data!")
+            logger.warning(f"   This creates DATA LEAKAGE and may lead to overestimated performance.")
+            logger.warning(f"   For fair evaluation, consider using a completely separate held-out test set.")
+
         except Exception as e:
             logger.warning(f"Failed to create balanced dataset for domain {domain}: {e}")
             import traceback
@@ -363,6 +368,7 @@ def load_balanced_office_caltech_data(root,
             continue
 
     return balanced_datasets
+
 
 
 
