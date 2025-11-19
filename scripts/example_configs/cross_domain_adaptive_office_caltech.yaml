@@ -1,6 +1,6 @@
 # Cross-Domain Adaptive configuration for Office-Caltech-10
 use_gpu: True
-device: 0
+device: 1
 backend: 'torch'
 seed: 123
 

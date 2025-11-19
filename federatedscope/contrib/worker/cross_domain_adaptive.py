@@ -693,3 +693,4 @@ def call_cross_domain_adaptive_worker(method: str):
 
 register_worker('cross_domain_adaptive', call_cross_domain_adaptive_worker)
 
+
