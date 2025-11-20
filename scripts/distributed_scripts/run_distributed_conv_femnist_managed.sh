@@ -7,6 +7,13 @@ set -e
 
 # PID file to track all spawned processes
 PID_FILE="/tmp/federatedscope_femnist_pids.txt"
+SHARD_ROOT="data/femnist/shards"
+MANIFEST_PATH="$SHARD_ROOT/manifest.json"
+CLIENT_SHARDS=(
+    "$SHARD_ROOT/client_1"
+    "$SHARD_ROOT/client_2"
+    "$SHARD_ROOT/client_3"
+)
 
 # Cleanup function to kill all spawned processes
 cleanup() {
@@ -45,7 +52,25 @@ echo ""
 # Clear old PID file
 rm -f "$PID_FILE"
 
-cd ..
+if [ ! -f "$MANIFEST_PATH" ]; then
+    echo "Manifest not found at $MANIFEST_PATH"
+    echo "Please run scripts/tools/prepare_femnist_shards.py --clients 3 before launching."
+    exit 1
+fi
+
+for shard in "${CLIENT_SHARDS[@]}"; do
+    if [ ! -d "$shard" ]; then
+        echo "Missing shard directory: $shard"
+        echo "Re-run scripts/tools/prepare_femnist_shards.py to materialize FEMNIST splits."
+        exit 1
+    fi
+    if [ ! -f "$shard/train.pt" ]; then
+        echo "Shard $shard is incomplete (train.pt missing)."
+        exit 1
+    fi
+done
+
+# cd ..
 
 echo "Starting processes..."
 echo ""
@@ -99,6 +124,7 @@ echo ""
 echo "To stop all processes:"
 echo "  - Press Ctrl+C in this terminal, or"
 echo "  - Run: ./scripts/distributed_scripts/stop_distributed.sh"
+echo "  - Ensure FEMNIST shards were generated via scripts/tools/prepare_femnist_shards.py"
 echo ""
 echo "Waiting for processes to complete (Press Ctrl+C to stop)..."
 echo ""

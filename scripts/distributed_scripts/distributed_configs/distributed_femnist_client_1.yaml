@@ -17,6 +17,15 @@ distribute:
   client_port: 50052
   role: 'client'
   data_idx: 2
+  client_id: 1
+distributed_data:
+  enabled: True
+  dataset: femnist
+  shard_path: data/femnist/shards/client_1
+  manifest: data/femnist/shards/manifest.json
+  strict_check: True
+  meta_file: meta.json
+  streaming: False
 data:
   root: data/
   type: femnist

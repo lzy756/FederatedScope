@@ -67,6 +67,7 @@ def extend_fl_setting_cfg(cfg):
     cfg.distribute.role = 'client'
     cfg.distribute.data_file = 'data'
     cfg.distribute.data_idx = -1  # data_idx is used to specify the data
+    cfg.distribute.client_id = -1
     # index in distributed mode when adopting a centralized dataset for
     # simulation (formatted as {data_idx: data/dataloader}).
     # data_idx = -1 means that the whole dataset is owned by the participant.
@@ -76,6 +77,18 @@ def extend_fl_setting_cfg(cfg):
     cfg.distribute.grpc_max_receive_message_length = 300 * 1024 * 1024  # 300M
     cfg.distribute.grpc_enable_http_proxy = False
     cfg.distribute.grpc_compression = 'nocompression'  # [deflate, gzip]
+
+    # ------------------------------------------------------------------ #
+    # Custom distributed data loader options
+    # ------------------------------------------------------------------ #
+    cfg.distributed_data = CN()
+    cfg.distributed_data.enabled = False
+    cfg.distributed_data.dataset = ''
+    cfg.distributed_data.shard_path = ''
+    cfg.distributed_data.manifest = ''
+    cfg.distributed_data.meta_file = 'meta.json'
+    cfg.distributed_data.streaming = False
+    cfg.distributed_data.strict_check = True
 
     # ---------------------------------------------------------------------- #
     # Vertical FL related options (for demo)
@@ -273,6 +286,28 @@ def assert_fl_setting_cfg(cfg):
         raise ValueError(f'The type of grpc compression is expected to be one '
                          f'of ["nocompression", "deflate", "gzip"], but got '
                          f'{cfg.distribute.grpc_compression}.')
+
+    if cfg.distributed_data.enabled:
+        if cfg.federate.mode.lower() != 'distributed':
+            logger.warning(
+                "distributed_data.enabled is True but federate.mode is not "
+                "'distributed'. The custom loader will be ignored.")
+        if cfg.distribute.role == 'client':
+            if cfg.distribute.client_id < 0:
+                raise ValueError(
+                    'Please specify cfg.distribute.client_id for distributed '
+                    'clients when distributed_data is enabled.')
+            if cfg.distributed_data.shard_path == '':
+                raise ValueError(
+                    'Please set cfg.distributed_data.shard_path for '
+                    'distributed clients.')
+        if cfg.distribute.role == 'server' and \
+                cfg.distributed_data.manifest == '' and \
+                cfg.distributed_data.strict_check:
+            logger.warning(
+                'distributed_data.strict_check is enabled but no manifest '
+                'path is provided. Server-side consistency checks will be '
+                'skipped.')
 
 
 register_config("fl_setting", extend_fl_setting_cfg)

@@ -26,6 +26,13 @@ Also, users can run distribute mode with other provided datasets and models. Tak
 bash distributed_scripts/run_distributed_conv_femnist.sh
 ```
 
+A managed variant that uses real on-disk FEMNIST shards is available as well. Before launching the server and clients, materialize the shards and their manifest:
+```shell script
+python scripts/tools/prepare_femnist_shards.py --clients 3
+bash distributed_scripts/run_distributed_conv_femnist_managed.sh
+```
+Each client configuration now reads its own shard via `distributed_data.shard_path`, so the server never loads raw FEMNIST samples and can verify the shard layout through `distributed_data.manifest`.
+
 ### Federated Learning in Computer Vision (FL-CV)
 We provide several configurations (yaml files) as examples to demonstrate how to apply FL in CV with FederatedScope.
 Users can run the following comments for reproducing, and modify/add the yaml file for customization, such as using provided/customized datasets and models, tunning hyperparameters, etc.

@@ -14,7 +14,14 @@ distribute:
   server_host: '127.0.0.1'
   server_port: 50051
   role: 'server'
-  data_idx: 1
+  client_id: 0
+distributed_data:
+  enabled: True
+  dataset: femnist
+  shard_path: ''
+  manifest: data/femnist/shards/manifest.json
+  strict_check: True
+  streaming: False
 data:
   root: data/
   type: femnist
@@ -27,6 +34,7 @@ model:
   type: convnet2
   hidden: 128
   out_channels: 62
+  input_shape: [1, 28, 28]
 train:
   local_update_steps: 1
   batch_or_epoch: epoch

@@ -3,6 +3,8 @@ import logging
 from importlib import import_module
 from federatedscope.core.data.utils import RegexInverseMap, load_dataset, \
     convert_data_mode
+from federatedscope.core.data.distributed_loader import \
+    load_distributed_data
 from federatedscope.core.auxiliaries.utils import setup_seed
 
 import federatedscope.register as register
@@ -34,6 +36,12 @@ TRANS_DATA_MAP = {
     'RawDataTranslator': ['hetero_nlp_tasks'],
 }
 DATA_TRANS_MAP = RegexInverseMap(TRANS_DATA_MAP, None)
+
+
+def _use_distributed_loader(config):
+    return hasattr(config, 'distributed_data') and \
+        config.distributed_data.enabled and \
+        config.federate.mode.lower() == 'distributed'
 
 
 def get_data(config, client_cfgs=None):
@@ -120,6 +128,9 @@ def get_data(config, client_cfgs=None):
         data_and_config = func(config, client_cfgs)
         if data_and_config is not None:
             return data_and_config
+
+    if _use_distributed_loader(config):
+        return load_distributed_data(config)
 
     # Load dataset from source files
     dataset, modified_config = load_dataset(config, client_cfgs)
