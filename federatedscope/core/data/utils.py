@@ -50,7 +50,7 @@ def load_dataset(config, client_cfgs=None):
     elif config.data.type.lower() == 'quadratic':
         from federatedscope.tabular.dataloader import load_quadratic_dataset
         dataset, modified_config = load_quadratic_dataset(config)
-    elif config.data.type.lower() in ['femnist', 'celeba', 'office_caltech']:
+    elif config.data.type.lower() in ['femnist', 'celeba', 'office_caltech', 'pacs']:
         from federatedscope.cv.dataloader import load_cv_dataset
         dataset, modified_config = load_cv_dataset(config)
     elif config.data.type.lower() in ['cifar4cl', 'cifar4lp']:
@@ -759,4 +759,5 @@ def download_url(url: str, folder='folder'):
         f.write(data.read())
 
     return path
+
 

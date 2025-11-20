@@ -65,7 +65,7 @@ class CrossDomainAdaptiveServer(FedLSAServer):
                                cfg.pretrain_rounds, cfg.ondemand_rounds)
 
         # Load balanced server-side test data for global evaluation
-        if self._cfg.federate.make_global_eval and self._cfg.data.type.lower() == 'office_caltech':
+        if self._cfg.federate.make_global_eval and self._cfg.data.type.lower() in ['office_caltech', 'pacs']:
             try:
                 self._load_balanced_test_data()
             except Exception as e:
@@ -370,13 +370,16 @@ class CrossDomainAdaptiveServer(FedLSAServer):
         """
         Load balanced test datasets for server-side global evaluation.
 
-        Creates 4 balanced test sets (one per domain: amazon, webcam, dslr, caltech),
+        Creates balanced test sets (one per domain),
         where each test set has equal number of samples from each class.
 
         These test sets are held-out and excluded from client training/validation/test data
         to prevent data leakage.
+
+        Supports:
+        - office_caltech: 4 domains (amazon, webcam, dslr, caltech)
+        - pacs: 4 domains (photo, art_painting, cartoon, sketch)
         """
-        from federatedscope.cv.dataset.office_caltech import load_balanced_office_caltech_data
         from torch.utils.data import DataLoader
 
         logger.info("Loading balanced test datasets for server-side evaluation...")
@@ -388,13 +391,27 @@ class CrossDomainAdaptiveServer(FedLSAServer):
             samples_per_class = 10
             logger.info(f"Using default samples_per_class={samples_per_class} for server test data")
 
-        # Load balanced test data for all domains
-        result = load_balanced_office_caltech_data(
-            root=self._cfg.data.root,
-            samples_per_class=samples_per_class,
-            transform=None,  # Will use default transform
-            seed=self._cfg.seed
-        )
+        # Load balanced test data based on dataset type
+        dataset_type = self._cfg.data.type.lower()
+
+        if dataset_type == 'office_caltech':
+            from federatedscope.cv.dataset.office_caltech import load_balanced_office_caltech_data
+            result = load_balanced_office_caltech_data(
+                root=self._cfg.data.root,
+                samples_per_class=samples_per_class,
+                transform=None,  # Will use default transform
+                seed=self._cfg.seed
+            )
+        elif dataset_type == 'pacs':
+            from federatedscope.cv.dataset.pacs import load_balanced_pacs_data
+            result = load_balanced_pacs_data(
+                root=self._cfg.data.root,
+                samples_per_class=samples_per_class,
+                transform=None,  # Will use default transform
+                seed=self._cfg.seed
+            )
+        else:
+            raise ValueError(f"Unsupported dataset type for balanced test data: {dataset_type}")
 
         balanced_datasets = result['datasets']
         self.server_held_out_indices = result['excluded_indices']
@@ -692,5 +709,6 @@ def call_cross_domain_adaptive_worker(method: str):
 
 
 register_worker('cross_domain_adaptive', call_cross_domain_adaptive_worker)
+
 
 

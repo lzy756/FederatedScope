@@ -1,5 +1,6 @@
 from federatedscope.cv.dataset.leaf_cv import LEAF_CV
 from federatedscope.cv.dataset.office_caltech import load_office_caltech_domain_data
+from federatedscope.cv.dataset.pacs import load_pacs_domain_data
 from federatedscope.core.auxiliaries.transform_builder import get_transform
 import numpy as np
 from torch.utils.data import Subset
@@ -71,7 +72,7 @@ def split_data_by_dirichlet(dataset, num_clients, num_classes, alpha, seed):
 
 def load_cv_dataset(config=None):
     """
-    Return the dataset of ``femnist``, ``celeba``, or ``office_caltech``.
+    Return the dataset of ``femnist``, ``celeba``, ``office_caltech``, or ``pacs``.
 
     Args:
         config: configurations for FL, see ``federatedscope.core.configs``
@@ -263,10 +264,164 @@ def load_cv_dataset(config=None):
         # Update config with actual client_num
         config.merge_from_list(['federate.client_num', client_num])
 
+    elif name == 'pacs':
+        # PACS has 4 domains and 7 classes
+        domains = ['photo', 'art_painting', 'cartoon', 'sketch']
+        num_domains = len(domains)
+        num_classes = 7  # PACS has 7 classes
+
+        # Get the desired number of clients from config
+        desired_client_num = config.federate.client_num
+
+        # Get Dirichlet alpha parameter from config (0.0 means no Dirichlet, uniform split)
+        dirichlet_alpha = getattr(config.data, 'dirichlet_alpha', 0.0)
+
+        # Get transforms
+        train_transform = transforms_funcs.get('transform', None)
+        val_transform = val_transforms_funcs.get('transform', None)
+        test_transform = test_transforms_funcs.get('transform', None)
+
+        if desired_client_num <= num_domains:
+            # If desired clients <= domains, use one domain per client
+            data_dict = dict()
+            for client_idx, domain in enumerate(domains[:desired_client_num], start=1):
+                domain_data = load_pacs_domain_data(
+                    root=path,
+                    domain=domain,
+                    splits=splits,
+                    transform=train_transform,
+                    val_transform=val_transform,
+                    test_transform=test_transform,
+                    seed=config.seed
+                )
+
+                # Apply Dirichlet split if alpha > 0
+                if dirichlet_alpha > 0:
+                    logger.info(f"Applying Dirichlet distribution (alpha={dirichlet_alpha}) to client {client_idx}")
+                    # For single client per domain, no splitting needed
+                    # But we could still filter classes based on Dirichlet
+                    # For now, keep all data
+                    data_dict[client_idx] = domain_data
+                else:
+                    data_dict[client_idx] = domain_data
+
+            client_num = desired_client_num
+        else:
+            # If desired clients > domains, split each domain among multiple clients
+            # Calculate how many clients per domain
+            clients_per_domain = [desired_client_num // num_domains] * num_domains
+            remainder = desired_client_num % num_domains
+
+            # Distribute remainder clients
+            for i in range(remainder):
+                clients_per_domain[i] += 1
+
+            data_dict = dict()
+            client_idx = 1
+
+            for domain_id, domain in enumerate(domains):
+                # Load full domain data
+                domain_data = load_pacs_domain_data(
+                    root=path,
+                    domain=domain,
+                    splits=splits,
+                    transform=train_transform,
+                    val_transform=val_transform,
+                    test_transform=test_transform,
+                    seed=config.seed
+                )
+
+                # Split this domain among multiple clients
+                num_clients_this_domain = clients_per_domain[domain_id]
+
+                if num_clients_this_domain == 1:
+                    # No splitting needed, assign entire domain to one client
+                    data_dict[client_idx] = domain_data
+                    client_idx += 1
+                else:
+                    # Check if we should use Dirichlet distribution
+                    if dirichlet_alpha > 0:
+                        logger.info(f"Splitting domain '{domain}' among {num_clients_this_domain} clients "
+                                  f"using Dirichlet distribution (alpha={dirichlet_alpha})")
+
+                        # Split each split (train/val/test) using Dirichlet
+                        for split_name in ['train', 'val', 'test']:
+                            dataset = domain_data[split_name]
+
+                            # Get client indices using Dirichlet distribution
+                            client_indices_list = split_data_by_dirichlet(
+                                dataset=dataset,
+                                num_clients=num_clients_this_domain,
+                                num_classes=num_classes,
+                                alpha=dirichlet_alpha,
+                                seed=config.seed + domain_id + hash(split_name) % 1000
+                            )
+
+                            # Assign data to clients
+                            for local_client_id in range(num_clients_this_domain):
+                                global_client_id = client_idx + local_client_id
+
+                                # Initialize client data dict if not exists
+                                if global_client_id not in data_dict:
+                                    data_dict[global_client_id] = {}
+
+                                # Create subset with Dirichlet-sampled indices
+                                indices = client_indices_list[local_client_id]
+                                data_dict[global_client_id][split_name] = Subset(dataset, indices)
+
+                                # Log class distribution for train split
+                                if split_name == 'train':
+                                    labels = np.array(dataset.targets)[indices]
+                                    unique, counts = np.unique(labels, return_counts=True)
+                                    class_dist = dict(zip(unique.tolist(), counts.tolist()))
+                                    logger.info(f"  Client {global_client_id} ({domain}, {split_name}): "
+                                              f"{len(indices)} samples, class distribution: {class_dist}")
+
+                    else:
+                        # Use uniform split (original behavior)
+                        logger.info(f"Splitting domain '{domain}' among {num_clients_this_domain} clients uniformly")
+
+                        for split_name in ['train', 'val', 'test']:
+                            dataset = domain_data[split_name]
+                            total_samples = len(dataset)
+
+                            # Create indices for splitting
+                            indices = np.arange(total_samples)
+                            np.random.seed(config.seed + domain_id)
+                            np.random.shuffle(indices)
+
+                            # Calculate split sizes
+                            split_sizes = [total_samples // num_clients_this_domain] * num_clients_this_domain
+                            for i in range(total_samples % num_clients_this_domain):
+                                split_sizes[i] += 1
+
+                            # Create subsets for each client
+                            start_idx = 0
+                            for local_client_id in range(num_clients_this_domain):
+                                end_idx = start_idx + split_sizes[local_client_id]
+                                subset_indices = indices[start_idx:end_idx].tolist()
+
+                                # Initialize client data dict if not exists
+                                global_client_id = client_idx + local_client_id
+                                if global_client_id not in data_dict:
+                                    data_dict[global_client_id] = {}
+
+                                # Create subset
+                                data_dict[global_client_id][split_name] = Subset(dataset, subset_indices)
+                                start_idx = end_idx
+
+                    client_idx += num_clients_this_domain
+
+            client_num = desired_client_num
+
+        # Update config with actual client_num
+        config.merge_from_list(['federate.client_num', client_num])
+
     else:
         raise ValueError(f'No dataset named: {name}!')
 
     return data_dict, config
+
 
 
 
