@@ -2,6 +2,8 @@ import copy
 import logging
 import sys
 import pickle
+import threading
+import time
 
 from federatedscope.core.message import Message
 from federatedscope.core.communication import StandaloneCommManager, \
@@ -183,6 +185,58 @@ class Client(BaseClient):
                 'port': self.comm_manager.port
             }
 
+        # Heartbeat sender for distributed mode
+        self._heartbeat_stop_event = threading.Event()
+        self._heartbeat_thread = None
+
+    def _start_heartbeat_sender(self):
+        """
+        Start a background thread that periodically sends heartbeat messages
+        to the server to indicate the client is still alive.
+        """
+        if self.mode != 'distributed':
+            return
+
+        heartbeat_interval = getattr(self._cfg.distribute,
+                                     'heartbeat_interval', 30)
+
+        def _sender_loop():
+            while not self._heartbeat_stop_event.is_set():
+                # Wait for the interval (can be interrupted by stop event)
+                if self._heartbeat_stop_event.wait(heartbeat_interval):
+                    break  # Stop event was set
+
+                # Only send heartbeat if we have a valid ID
+                if self.ID != -1:
+                    try:
+                        self.comm_manager.send(
+                            Message(msg_type='heartbeat',
+                                    sender=self.ID,
+                                    receiver=[self.server_id],
+                                    state=self.state,
+                                    timestamp=0,
+                                    content='heartbeat'))
+                        logger.debug(f'Client #{self.ID}: Sent heartbeat')
+                    except Exception as e:
+                        logger.warning(
+                            f'Client #{self.ID}: Failed to send heartbeat: {e}'
+                        )
+
+        self._heartbeat_thread = threading.Thread(
+            target=_sender_loop,
+            name=f'HeartbeatSender-{self.ID}',
+            daemon=True)
+        self._heartbeat_thread.start()
+        logger.info(f'Client: Heartbeat sender started '
+                    f'(interval={heartbeat_interval}s)')
+
+    def _stop_heartbeat_sender(self):
+        """Stop the heartbeat sender thread."""
+        if self._heartbeat_thread is not None:
+            self._heartbeat_stop_event.set()
+            self._heartbeat_thread.join(timeout=5)
+            self._heartbeat_thread = None
+
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:
             return None
@@ -230,6 +284,10 @@ class Client(BaseClient):
         To listen to the message and handle them accordingly (used for \
         distributed mode)
         """
+        # Start heartbeat sender for distributed mode
+        if self.mode == 'distributed':
+            self._start_heartbeat_sender()
+
         # Buffer for messages received before ID assignment
         pending_messages = []
 
@@ -599,6 +657,9 @@ class Client(BaseClient):
             f"================= client {self.ID} received finish message "
             f"=================")
 
+        # Stop heartbeat sender before finishing
+        self._stop_heartbeat_sender()
+
         if message.content is not None:
             self.trainer.update(message.content,
                                 strict=self._cfg.federate.share_local_model)
@@ -614,6 +675,16 @@ class Client(BaseClient):
             message: The received message
         """
         self._monitor.global_converged()
+
+    def callback_funcs_for_heartbeat_ack(self, message: Message):
+        """
+        The handling function for receiving heartbeat acknowledgment from \
+        the server. This confirms the connection is alive.
+
+        Arguments:
+            message: The received message
+        """
+        logger.debug(f'Client #{self.ID}: Received heartbeat ack from server')
 
     @classmethod
     def get_msg_handler_dict(cls):

@@ -1,6 +1,9 @@
 import grpc
 from concurrent import futures
 import logging
+import random
+import threading
+import time
 import torch.distributed as dist
 
 from collections import deque
@@ -104,10 +107,16 @@ class gRPCCommManager(object):
     """
         The implementation of gRPCCommManager is referred to the tutorial on
         https://grpc.io/docs/languages/python/
+
+        Enhanced with:
+        - Exponential backoff retry for sending messages
+        - Neighbor status tracking (online/offline)
+        - Thread-safe status management
     """
     def __init__(self, host='0.0.0.0', port='50050', client_num=2, cfg=None):
         self.host = host
         self.port = port
+        self.cfg = cfg
         options = [
             ("grpc.max_send_message_length", cfg.grpc_max_send_message_length),
             ("grpc.max_receive_message_length",
@@ -129,6 +138,15 @@ class gRPCCommManager(object):
                                       options=options)
         self.neighbors = dict()
         self.monitor = None  # used to track the communication related metrics
+
+        # Neighbor status tracking with thread safety
+        self._neighbor_status = dict()  # neighbor_id -> bool (True=online)
+        self._status_lock = threading.Lock()
+
+        # Retry configuration
+        self._max_retries = getattr(cfg, 'send_max_retries', 3)
+        self._retry_base_delay = getattr(cfg, 'send_retry_base_delay', 1.0)
+        self._retry_max_delay = getattr(cfg, 'send_retry_max_delay', 30.0)
 
     def serve(self, max_workers, host, port, options):
         """
@@ -155,6 +173,9 @@ class gRPCCommManager(object):
         else:
             raise TypeError(f"The type of address ({type(address)}) is not "
                             "supported yet")
+        # Mark new neighbor as online by default
+        with self._status_lock:
+            self._neighbor_status[neighbor_id] = True
 
     def get_neighbors(self, neighbor_id=None):
         address = dict()
@@ -169,7 +190,51 @@ class gRPCCommManager(object):
             # Get all neighbors
             return self.neighbors
 
-    def _send(self, receiver_address, message):
+    def is_neighbor_alive(self, neighbor_id):
+        """Check if a neighbor is marked as online."""
+        with self._status_lock:
+            return self._neighbor_status.get(neighbor_id, False)
+
+    def mark_neighbor_offline(self, neighbor_id):
+        """Mark a neighbor as offline."""
+        with self._status_lock:
+            if neighbor_id in self._neighbor_status:
+                if self._neighbor_status[neighbor_id]:
+                    logger.warning(
+                        f'Neighbor #{neighbor_id} marked as OFFLINE')
+                self._neighbor_status[neighbor_id] = False
+
+    def mark_neighbor_online(self, neighbor_id):
+        """Mark a neighbor as online."""
+        with self._status_lock:
+            if neighbor_id in self._neighbor_status:
+                if not self._neighbor_status[neighbor_id]:
+                    logger.info(f'Neighbor #{neighbor_id} marked as ONLINE')
+                self._neighbor_status[neighbor_id] = True
+
+    def get_alive_neighbors(self):
+        """Get list of neighbor IDs that are currently online."""
+        with self._status_lock:
+            return [
+                nid for nid, alive in self._neighbor_status.items() if alive
+            ]
+
+    def _exponential_backoff(self, attempt):
+        """Calculate delay for exponential backoff with jitter."""
+        delay = min(
+            self._retry_base_delay * (2**attempt) + random.uniform(0, 1),
+            self._retry_max_delay)
+        return delay
+
+    def _send(self, receiver_address, message, receiver_id=None):
+        """
+        Send a message to a receiver with exponential backoff retry.
+
+        Args:
+            receiver_address: The address string (host:port) of the receiver
+            message: The Message object to send
+            receiver_id: Optional neighbor ID for status tracking
+        """
         def _create_stub(receiver_address):
             """
             This part is referred to
@@ -182,28 +247,66 @@ class gRPCCommManager(object):
             stub = gRPC_comm_manager_pb2_grpc.gRPCComServeFuncStub(channel)
             return stub, channel
 
-        stub, channel = _create_stub(receiver_address)
         request = message.transform(to_list=True)
-        try:
-            stub.sendMessage(request)
-        except grpc._channel._InactiveRpcError as error:
-            logger.warning(error)
-            pass
-        channel.close()
+        last_error = None
+
+        for attempt in range(self._max_retries):
+            stub, channel = _create_stub(receiver_address)
+            try:
+                stub.sendMessage(request)
+                channel.close()
+                # Success - mark neighbor as online if we have ID
+                if receiver_id is not None:
+                    self.mark_neighbor_online(receiver_id)
+                return True
+            except grpc._channel._InactiveRpcError as error:
+                last_error = error
+                channel.close()
+                if attempt < self._max_retries - 1:
+                    delay = self._exponential_backoff(attempt)
+                    logger.debug(
+                        f'Send to {receiver_address} failed (attempt '
+                        f'{attempt + 1}/{self._max_retries}), '
+                        f'retrying in {delay:.2f}s: {error.details()}')
+                    time.sleep(delay)
+
+        # All retries failed
+        logger.warning(f'Failed to send message to {receiver_address} after '
+                       f'{self._max_retries} attempts: {last_error}')
+        if receiver_id is not None:
+            self.mark_neighbor_offline(receiver_id)
+        return False
 
     def send(self, message):
+        """
+        Send a message to receivers, skipping offline neighbors.
+        """
         receiver = message.receiver
         if receiver is not None:
             if not isinstance(receiver, list):
                 receiver = [receiver]
             for each_receiver in receiver:
                 if each_receiver in self.neighbors:
+                    # Skip offline neighbors
+                    if not self.is_neighbor_alive(each_receiver):
+                        logger.debug(f'Skipping send to offline neighbor '
+                                     f'#{each_receiver}')
+                        continue
                     receiver_address = self.neighbors[each_receiver]
-                    self._send(receiver_address, message)
+                    self._send(receiver_address,
+                               message,
+                               receiver_id=each_receiver)
         else:
             for each_receiver in self.neighbors:
+                # Skip offline neighbors
+                if not self.is_neighbor_alive(each_receiver):
+                    logger.debug(
+                        f'Skipping send to offline neighbor #{each_receiver}')
+                    continue
                 receiver_address = self.neighbors[each_receiver]
-                self._send(receiver_address, message)
+                self._send(receiver_address,
+                           message,
+                           receiver_id=each_receiver)
 
     def receive(self):
         received_msg = self.server_funcs.receive()

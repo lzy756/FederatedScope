@@ -78,6 +78,13 @@ def extend_fl_setting_cfg(cfg):
     cfg.distribute.grpc_enable_http_proxy = False
     cfg.distribute.grpc_compression = 'nocompression'  # [deflate, gzip]
 
+    # Heartbeat and fault tolerance options
+    cfg.distribute.heartbeat_interval = 30  # seconds between heartbeats
+    cfg.distribute.heartbeat_timeout = 90  # seconds before marking offline
+    cfg.distribute.send_max_retries = 3  # max retries for sending messages
+    cfg.distribute.send_retry_base_delay = 1.0  # base delay in seconds
+    cfg.distribute.send_retry_max_delay = 30.0  # max delay in seconds
+
     # ------------------------------------------------------------------ #
     # Custom distributed data loader options
     # ------------------------------------------------------------------ #

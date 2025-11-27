@@ -61,6 +61,8 @@ class BaseClient(Worker):
                                [None])
         self.register_handlers('converged', self.callback_funcs_for_converged,
                                [None])
+        self.register_handlers('heartbeat_ack',
+                               self.callback_funcs_for_heartbeat_ack, [None])
 
     @abc.abstractmethod
     def run(self):
@@ -148,3 +150,13 @@ class BaseClient(Worker):
             message: The received message
         """
         raise NotImplementedError
+
+    def callback_funcs_for_heartbeat_ack(self, message):
+        """
+        The handling function for receiving heartbeat acknowledgment from \
+        the server. This confirms the connection is alive.
+
+        Arguments:
+            message: The received message
+        """
+        pass  # Default implementation, override in Client if needed

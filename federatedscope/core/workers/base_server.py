@@ -47,6 +47,8 @@ class BaseServer(Worker):
                                ['model_para', 'evaluate', 'finish'])
         self.register_handlers('metrics', self.callback_funcs_for_metrics,
                                ['converged'])
+        self.register_handlers('heartbeat', self.callback_funcs_for_heartbeat,
+                               ['heartbeat_ack'])
 
     @abc.abstractmethod
     def run(self):
@@ -94,3 +96,13 @@ class BaseServer(Worker):
             message: The received message
         """
         raise NotImplementedError
+
+    def callback_funcs_for_heartbeat(self, message):
+        """
+        The handling function for receiving heartbeat messages from clients.
+        Updates the client's last heartbeat timestamp.
+
+        Arguments:
+            message: The received message containing heartbeat
+        """
+        pass  # Default implementation, override in Server

@@ -2,6 +2,7 @@ import logging
 import copy
 import os
 import sys
+import threading
 
 import numpy as np
 import pickle
@@ -238,6 +239,12 @@ class Server(BaseServer):
         # inject noise before broadcast
         self._noise_injector = None
 
+        # Heartbeat tracking for distributed mode
+        self._heartbeat_lock = threading.Lock()
+        self._client_last_heartbeat = dict()  # client_id -> timestamp
+        self._heartbeat_checker_thread = None
+        self._heartbeat_stop_event = threading.Event()
+
     @property
     def client_num(self):
         return self._client_num
@@ -257,11 +264,64 @@ class Server(BaseServer):
     def register_noise_injector(self, func):
         self._noise_injector = func
 
+    def _start_heartbeat_checker(self):
+        """
+        Start a background thread that periodically checks client heartbeats
+        and marks clients as offline if they haven't sent a heartbeat within
+        the timeout period.
+        """
+        if self.mode != 'distributed':
+            return
+
+        heartbeat_interval = getattr(self._cfg.distribute,
+                                     'heartbeat_interval', 30)
+        heartbeat_timeout = getattr(self._cfg.distribute, 'heartbeat_timeout',
+                                    90)
+
+        def _checker_loop():
+            while not self._heartbeat_stop_event.is_set():
+                current_time = time.time()
+                with self._heartbeat_lock:
+                    for client_id, last_hb in list(
+                            self._client_last_heartbeat.items()):
+                        if current_time - last_hb > heartbeat_timeout:
+                            if hasattr(self.comm_manager, 'is_neighbor_alive'):
+                                if self.comm_manager.is_neighbor_alive(
+                                        client_id):
+                                    logger.warning(
+                                        f'Server: Client #{client_id} '
+                                        f'heartbeat timeout '
+                                        f'({current_time - last_hb:.1f}s > '
+                                        f'{heartbeat_timeout}s), '
+                                        f'marking as offline')
+                                    self.comm_manager.mark_neighbor_offline(
+                                        client_id)
+                # Sleep for heartbeat_interval before next check
+                self._heartbeat_stop_event.wait(heartbeat_interval)
+
+        self._heartbeat_checker_thread = threading.Thread(
+            target=_checker_loop, name='HeartbeatChecker', daemon=True)
+        self._heartbeat_checker_thread.start()
+        logger.info(f'Server: Heartbeat checker started '
+                    f'(interval={heartbeat_interval}s, '
+                    f'timeout={heartbeat_timeout}s)')
+
+    def _stop_heartbeat_checker(self):
+        """Stop the heartbeat checker thread."""
+        if self._heartbeat_checker_thread is not None:
+            self._heartbeat_stop_event.set()
+            self._heartbeat_checker_thread.join(timeout=5)
+            self._heartbeat_checker_thread = None
+
     def run(self):
         """
         To start the FL course, listen and handle messages (for distributed \
         mode).
         """
+
+        # Start heartbeat checker for distributed mode
+        if self.mode == 'distributed':
+            self._start_heartbeat_checker()
 
         # Begin: Broadcast model parameters and start to FL train
         while self.join_in_client_num < self.client_num:
@@ -315,6 +375,8 @@ class Server(BaseServer):
                         num_failure = 0
                     time_counter.reset()
 
+        # Stop heartbeat checker before terminating
+        self._stop_heartbeat_checker()
         self.terminate(msg_type='finish')
 
     def check_and_move_on(self,
@@ -1094,6 +1156,35 @@ class Server(BaseServer):
         self.msg_buffer['eval'][rnd][sender] = content
 
         return self.check_and_move_on(check_eval_result=True)
+
+    def callback_funcs_for_heartbeat(self, message: Message):
+        """
+        The handling function for receiving heartbeat messages from clients.
+        Updates the client's last heartbeat timestamp and sends an ack.
+
+        Arguments:
+            message: The received message containing heartbeat
+        """
+        sender = message.sender
+        current_time = time.time()
+
+        with self._heartbeat_lock:
+            self._client_last_heartbeat[sender] = current_time
+
+        # Mark neighbor as online (in case it was marked offline before)
+        if hasattr(self.comm_manager, 'mark_neighbor_online'):
+            self.comm_manager.mark_neighbor_online(sender)
+
+        logger.debug(f'Server: Received heartbeat from client #{sender}')
+
+        # Send heartbeat acknowledgment
+        self.comm_manager.send(
+            Message(msg_type='heartbeat_ack',
+                    sender=self.ID,
+                    receiver=[sender],
+                    state=self.state,
+                    timestamp=self.cur_timestamp,
+                    content='ack'))
 
     @classmethod
     def get_msg_handler_dict(cls):
