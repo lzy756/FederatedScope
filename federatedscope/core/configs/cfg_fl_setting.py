@@ -54,6 +54,11 @@ def extend_fl_setting_cfg(cfg):
     cfg.federate.atc_vanilla = False
     cfg.federate.atc_load_from = ''
 
+    # Minimum clients threshold for training
+    cfg.federate.min_clients_threshold = 0  # 0 means disabled
+    cfg.federate.graceful_termination_timeout = 300  # seconds to wait before
+    # graceful termination when clients are below threshold
+
     # ---------------------------------------------------------------------- #
     # Distribute training related options
     # ---------------------------------------------------------------------- #
@@ -84,6 +89,14 @@ def extend_fl_setting_cfg(cfg):
     cfg.distribute.send_max_retries = 3  # max retries for sending messages
     cfg.distribute.send_retry_base_delay = 1.0  # base delay in seconds
     cfg.distribute.send_retry_max_delay = 30.0  # max delay in seconds
+
+    # Client reconnection options (following gRPC backoff algorithm)
+    cfg.distribute.reconnect_enabled = True  # enable auto reconnection
+    cfg.distribute.reconnect_max_attempts = 10  # max reconnection attempts
+    cfg.distribute.reconnect_initial_backoff = 1.0  # initial backoff (sec)
+    cfg.distribute.reconnect_max_backoff = 60.0  # max backoff in seconds
+    cfg.distribute.reconnect_backoff_multiplier = 2.0  # backoff multiplier
+    cfg.distribute.reconnect_jitter = 0.2  # jitter factor (0-1)
 
     # ------------------------------------------------------------------ #
     # Custom distributed data loader options
@@ -293,6 +306,31 @@ def assert_fl_setting_cfg(cfg):
         raise ValueError(f'The type of grpc compression is expected to be one '
                          f'of ["nocompression", "deflate", "gzip"], but got '
                          f'{cfg.distribute.grpc_compression}.')
+
+    # Validate reconnection configuration
+    if cfg.distribute.reconnect_enabled:
+        if cfg.distribute.reconnect_max_attempts < 1:
+            raise ValueError(f'reconnect_max_attempts must be >= 1, got '
+                             f'{cfg.distribute.reconnect_max_attempts}')
+        if cfg.distribute.reconnect_initial_backoff <= 0:
+            raise ValueError(f'reconnect_initial_backoff must be > 0, got '
+                             f'{cfg.distribute.reconnect_initial_backoff}')
+        if cfg.distribute.reconnect_jitter < 0 or \
+                cfg.distribute.reconnect_jitter > 1:
+            raise ValueError(f'reconnect_jitter must be in [0, 1], got '
+                             f'{cfg.distribute.reconnect_jitter}')
+
+    # Validate min_clients_threshold configuration
+    if cfg.federate.min_clients_threshold < 0:
+        raise ValueError(f'min_clients_threshold must be >= 0, got '
+                         f'{cfg.federate.min_clients_threshold}')
+    if cfg.federate.min_clients_threshold > 0:
+        if cfg.federate.mode.lower() != 'distributed':
+            logger.warning(
+                'min_clients_threshold is only effective in distributed mode')
+        if cfg.federate.graceful_termination_timeout <= 0:
+            raise ValueError(f'graceful_termination_timeout must be > 0, got '
+                             f'{cfg.federate.graceful_termination_timeout}')
 
     if cfg.distributed_data.enabled:
         if cfg.federate.mode.lower() != 'distributed':

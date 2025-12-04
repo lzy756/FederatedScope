@@ -148,6 +148,24 @@ class gRPCCommManager(object):
         self._retry_base_delay = getattr(cfg, 'send_retry_base_delay', 1.0)
         self._retry_max_delay = getattr(cfg, 'send_retry_max_delay', 30.0)
 
+        # Connection lost callback (for client reconnection)
+        self._connection_lost_callbacks = []
+
+    def register_connection_lost_callback(self, callback):
+        """
+        Register a callback function to be called when connection is lost.
+        The callback receives the neighbor_id as argument.
+        """
+        self._connection_lost_callbacks.append(callback)
+
+    def _notify_connection_lost(self, neighbor_id):
+        """Notify all registered callbacks that connection is lost."""
+        for callback in self._connection_lost_callbacks:
+            try:
+                callback(neighbor_id)
+            except Exception as e:
+                logger.error(f'Error in connection lost callback: {e}')
+
     def serve(self, max_workers, host, port, options):
         """
         This function is referred to
@@ -219,6 +237,11 @@ class gRPCCommManager(object):
                 nid for nid, alive in self._neighbor_status.items() if alive
             ]
 
+    def get_online_client_count(self):
+        """Get the count of online neighbors."""
+        with self._status_lock:
+            return sum(1 for alive in self._neighbor_status.values() if alive)
+
     def _exponential_backoff(self, attempt):
         """Calculate delay for exponential backoff with jitter."""
         delay = min(
@@ -275,6 +298,8 @@ class gRPCCommManager(object):
                        f'{self._max_retries} attempts: {last_error}')
         if receiver_id is not None:
             self.mark_neighbor_offline(receiver_id)
+            # Notify connection lost callbacks
+            self._notify_connection_lost(receiver_id)
         return False
 
     def send(self, message):

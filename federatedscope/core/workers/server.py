@@ -245,6 +245,15 @@ class Server(BaseServer):
         self._heartbeat_checker_thread = None
         self._heartbeat_stop_event = threading.Event()
 
+        # Training pause/resume state for min_clients_threshold
+        self._is_training_paused = False
+        self._pause_start_time = None
+        self._pause_reason = None
+        self._min_clients_threshold = getattr(self._cfg.federate,
+                                              'min_clients_threshold', 0)
+        self._graceful_termination_timeout = getattr(
+            self._cfg.federate, 'graceful_termination_timeout', 300)
+
     @property
     def client_num(self):
         return self._client_num
@@ -312,6 +321,111 @@ class Server(BaseServer):
             self._heartbeat_stop_event.set()
             self._heartbeat_checker_thread.join(timeout=5)
             self._heartbeat_checker_thread = None
+
+    def _get_online_client_count(self):
+        """
+        Get the count of online clients.
+        """
+        if hasattr(self.comm_manager, 'get_online_client_count'):
+            return self.comm_manager.get_online_client_count()
+        # Fallback: count neighbors
+        return len(self.comm_manager.get_neighbors())
+
+    def _check_clients_threshold(self):
+        """
+        Check if the number of online clients meets the minimum threshold.
+        If below threshold, pause training. If threshold is met and training
+        was paused, resume training.
+
+        Returns:
+            bool: True if training can proceed, False if paused
+        """
+        if self._min_clients_threshold <= 0:
+            # Threshold disabled
+            return True
+
+        online_count = self._get_online_client_count()
+
+        if online_count < self._min_clients_threshold:
+            if not self._is_training_paused:
+                # Start pause
+                self._pause_training(
+                    f'Online clients ({online_count}) below threshold '
+                    f'({self._min_clients_threshold})')
+            else:
+                # Check if we should terminate due to timeout
+                elapsed = time.time() - self._pause_start_time
+                if elapsed > self._graceful_termination_timeout:
+                    logger.error(
+                        f'Server: Graceful termination - clients below '
+                        f'threshold for {elapsed:.1f}s '
+                        f'(timeout: {self._graceful_termination_timeout}s)')
+                    self._save_checkpoint_and_terminate(
+                        reason='insufficient_clients')
+                    return False
+                else:
+                    logger.info(
+                        f'Server: Training paused - waiting for clients '
+                        f'(online: {online_count}, threshold: '
+                        f'{self._min_clients_threshold}, '
+                        f'elapsed: {elapsed:.1f}s, '
+                        f'timeout: {self._graceful_termination_timeout}s)')
+            return False
+        else:
+            if self._is_training_paused:
+                # Resume training
+                self._resume_training(online_count)
+            return True
+
+    def _pause_training(self, reason):
+        """
+        Pause the training process.
+
+        Arguments:
+            reason: The reason for pausing
+        """
+        self._is_training_paused = True
+        self._pause_start_time = time.time()
+        self._pause_reason = reason
+        logger.warning(f'Server: Training PAUSED - {reason}')
+
+    def _resume_training(self, online_count=None):
+        """
+        Resume the training process.
+
+        Arguments:
+            online_count: Current number of online clients (for logging)
+        """
+        pause_duration = time.time() - self._pause_start_time
+        self._is_training_paused = False
+        self._pause_start_time = None
+        self._pause_reason = None
+        logger.info(
+            f'Server: Training RESUMED - online clients: {online_count}, '
+            f'pause duration: {pause_duration:.1f}s')
+
+    def _save_checkpoint_and_terminate(self, reason='unknown'):
+        """
+        Save checkpoint and gracefully terminate training.
+
+        Arguments:
+            reason: The reason for termination
+        """
+        logger.info(f'Server: Saving checkpoint before termination '
+                    f'(reason: {reason})...')
+
+        # Save model if save_to is configured
+        if self._cfg.federate.save_to != '':
+            self.aggregator.save_model(self._cfg.federate.save_to, self.state)
+            logger.info(f'Server: Checkpoint saved to '
+                        f'{self._cfg.federate.save_to} at round {self.state}')
+
+        # Save best results if available
+        if self.best_results:
+            self.save_best_results()
+
+        # Terminate
+        self.terminate(msg_type='finish')
 
     def run(self):
         """
@@ -409,6 +523,16 @@ class Server(BaseServer):
 
         move_on_flag = True  # To record whether moving to a new training
         # round or finishing the evaluation
+
+        # Check clients threshold before aggregation (only for training)
+        if not check_eval_result and self.mode == 'distributed':
+            if not self._check_clients_threshold():
+                # Training is paused or terminated
+                if self.is_finish:
+                    return False
+                # Wait and let the caller retry
+                return False
+
         if self.check_buffer(self.state, min_received_num, check_eval_result):
             if not check_eval_result:
                 # Receiving enough feedback in the training process
@@ -1091,8 +1215,37 @@ class Server(BaseServer):
             self.join_in_info[sender] = info
             logger.info('Server: Client #{:d} has joined in !'.format(sender))
         else:
-            self.join_in_client_num += 1
             sender, address = message.sender, message.content
+
+            # Check if this is a reconnection (client with existing ID)
+            if int(sender) != -1 and sender in self.comm_manager.neighbors:
+                # This is a reconnection request
+                logger.info(f'Server: Client #{sender} is reconnecting...')
+                # Update neighbor address and mark as online
+                self.comm_manager.add_neighbors(neighbor_id=sender,
+                                                address=address)
+                # Update heartbeat timestamp
+                with self._heartbeat_lock:
+                    self._client_last_heartbeat[sender] = time.time()
+                # Send current model state to reconnected client
+                if self.state > 0:
+                    if self.model_num == 1:
+                        model_para = self.models[0].state_dict()
+                    else:
+                        model_para = [m.state_dict() for m in self.models]
+                    self.comm_manager.send(
+                        Message(msg_type='model_para',
+                                sender=self.ID,
+                                receiver=[sender],
+                                state=self.state,
+                                timestamp=self.cur_timestamp,
+                                content=model_para))
+                    logger.info(
+                        f'Server: Sent current model (round {self.state}) '
+                        f'to reconnected client #{sender}')
+                return
+
+            self.join_in_client_num += 1
             if int(sender) == -1:  # assign number to client
                 sender = self.join_in_client_num
                 self.comm_manager.add_neighbors(neighbor_id=sender,

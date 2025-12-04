@@ -189,6 +189,15 @@ class Client(BaseClient):
         self._heartbeat_stop_event = threading.Event()
         self._heartbeat_thread = None
 
+        # Reconnection support for distributed mode
+        self._reconnect_enabled = getattr(self._cfg.distribute,
+                                          'reconnect_enabled', True)
+        self._reconnect_stop_event = threading.Event()
+        self._reconnect_thread = None
+        self._connection_lost_event = threading.Event()
+        self._is_reconnecting = False
+        self._reconnect_lock = threading.Lock()
+
     def _start_heartbeat_sender(self):
         """
         Start a background thread that periodically sends heartbeat messages
@@ -236,6 +245,120 @@ class Client(BaseClient):
             self._heartbeat_stop_event.set()
             self._heartbeat_thread.join(timeout=5)
             self._heartbeat_thread = None
+
+    def _start_reconnect_monitor(self):
+        """
+        Start a background thread that monitors connection status and
+        attempts to reconnect when connection is lost.
+        """
+        if self.mode != 'distributed' or not self._reconnect_enabled:
+            return
+
+        # Register callback for connection lost events
+        if hasattr(self.comm_manager, 'register_connection_lost_callback'):
+            self.comm_manager.register_connection_lost_callback(
+                self._on_connection_lost)
+
+        def _reconnect_loop():
+            while not self._reconnect_stop_event.is_set():
+                # Wait for connection lost event
+                if self._connection_lost_event.wait(timeout=1.0):
+                    if self._reconnect_stop_event.is_set():
+                        break
+                    self._connection_lost_event.clear()
+                    self._attempt_reconnect()
+
+        self._reconnect_thread = threading.Thread(
+            target=_reconnect_loop,
+            name=f'ReconnectMonitor-{self.ID}',
+            daemon=True)
+        self._reconnect_thread.start()
+        logger.info('Client: Reconnect monitor started')
+
+    def _on_connection_lost(self, neighbor_id):
+        """Callback when connection to server is lost."""
+        if neighbor_id == self.server_id:
+            logger.warning(f'Client #{self.ID}: Connection to server lost, '
+                           f'triggering reconnection...')
+            self._connection_lost_event.set()
+
+    def _attempt_reconnect(self):
+        """
+        Attempt to reconnect to the server using exponential backoff
+        with jitter (following gRPC backoff algorithm).
+        """
+        with self._reconnect_lock:
+            if self._is_reconnecting:
+                return
+            self._is_reconnecting = True
+
+        max_attempts = getattr(self._cfg.distribute, 'reconnect_max_attempts',
+                               10)
+        initial_backoff = getattr(self._cfg.distribute,
+                                  'reconnect_initial_backoff', 1.0)
+        max_backoff = getattr(self._cfg.distribute, 'reconnect_max_backoff',
+                              60.0)
+        multiplier = getattr(self._cfg.distribute,
+                             'reconnect_backoff_multiplier', 2.0)
+        jitter = getattr(self._cfg.distribute, 'reconnect_jitter', 0.2)
+
+        current_backoff = initial_backoff
+        import random
+
+        for attempt in range(max_attempts):
+            if self._reconnect_stop_event.is_set():
+                break
+
+            logger.info(f'Client #{self.ID}: Reconnection attempt '
+                        f'{attempt + 1}/{max_attempts}...')
+
+            try:
+                # Try to send a join_in message to reconnect
+                self.comm_manager.mark_neighbor_online(self.server_id)
+                self.comm_manager.send(
+                    Message(msg_type='join_in',
+                            sender=self.ID,
+                            receiver=[self.server_id],
+                            timestamp=0,
+                            content=self.local_address))
+
+                # Wait a bit and check if server responds
+                time.sleep(2.0)
+
+                # If we're still online (heartbeat ack received), reconnection
+                # is successful
+                if hasattr(self.comm_manager, 'is_neighbor_alive'):
+                    if self.comm_manager.is_neighbor_alive(self.server_id):
+                        logger.info(f'Client #{self.ID}: Reconnection '
+                                    f'successful!')
+                        with self._reconnect_lock:
+                            self._is_reconnecting = False
+                        return
+
+            except Exception as e:
+                logger.warning(f'Client #{self.ID}: Reconnection attempt '
+                               f'{attempt + 1} failed: {e}')
+
+            # Calculate next backoff with jitter
+            jitter_value = random.uniform(-jitter, jitter) * current_backoff
+            sleep_time = min(current_backoff + jitter_value, max_backoff)
+            logger.debug(f'Client #{self.ID}: Waiting {sleep_time:.2f}s '
+                         f'before next reconnection attempt')
+            time.sleep(sleep_time)
+            current_backoff = min(current_backoff * multiplier, max_backoff)
+
+        logger.error(f'Client #{self.ID}: Failed to reconnect after '
+                     f'{max_attempts} attempts')
+        with self._reconnect_lock:
+            self._is_reconnecting = False
+
+    def _stop_reconnect_monitor(self):
+        """Stop the reconnect monitor thread."""
+        if self._reconnect_thread is not None:
+            self._reconnect_stop_event.set()
+            self._connection_lost_event.set()  # Unblock the wait
+            self._reconnect_thread.join(timeout=5)
+            self._reconnect_thread = None
 
     def _gen_timestamp(self, init_timestamp, instance_number):
         if init_timestamp is None:
@@ -287,6 +410,7 @@ class Client(BaseClient):
         # Start heartbeat sender for distributed mode
         if self.mode == 'distributed':
             self._start_heartbeat_sender()
+            self._start_reconnect_monitor()
 
         # Buffer for messages received before ID assignment
         pending_messages = []
@@ -659,6 +783,8 @@ class Client(BaseClient):
 
         # Stop heartbeat sender before finishing
         self._stop_heartbeat_sender()
+        # Stop reconnect monitor before finishing
+        self._stop_reconnect_monitor()
 
         if message.content is not None:
             self.trainer.update(message.content,
