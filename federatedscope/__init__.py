@@ -16,3 +16,9 @@ def _setup_logger():
 
 
 _setup_logger()
+
+# Ensure FedMM components are registered when the package is imported.
+try:
+    import federatedscope.fedmm  # noqa: F401
+except ImportError:
+    pass

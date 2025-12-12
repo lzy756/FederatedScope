@@ -37,6 +37,19 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedswa.start_rnd = 30
 
     # ---------------------------------------------------------------------- #
+    # FedMM options
+    # ---------------------------------------------------------------------- #
+    cfg.fedmm = CN()
+    cfg.fedmm.lambda1 = 2.0
+    cfg.fedmm.lambda1_decay = 1.05
+    cfg.fedmm.lambda1_decay_step = 100.0
+    cfg.fedmm.mu = 2.0
+    cfg.fedmm.batch_size = 64
+    cfg.fedmm.domain_loss_coef = 1.0
+    cfg.fedmm.source_ratio = 0.0
+    cfg.fedmm.target_ratio = 1.0
+
+    # ---------------------------------------------------------------------- #
     # Personalization related options, pFL
     # ---------------------------------------------------------------------- #
     cfg.personalization = CN()

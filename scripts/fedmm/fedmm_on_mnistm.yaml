@@ -1,0 +1,50 @@
+seed: 0
+backend: torch
+
+federate:
+  mode: standalone
+  method: fedmm
+  client_num: 2
+  sample_client_num: 2
+  total_round_num: 15000
+  make_global_eval: True
+  ignore_weight: True
+
+data:
+  type: fedmm_mnistm
+  root: data
+
+model:
+  type: fedmm_dann
+  out_channels: 10
+  in_channels: 3
+
+criterion:
+  type: CrossEntropyLoss
+
+fedmm:
+  batch_size: 64
+  lambda1: 2.0
+  lambda1_decay: 1.05
+  lambda1_decay_step: 100.0
+  mu: 2.0
+  domain_loss_coef: 1.0
+  source_ratio: 0.0
+  target_ratio: 1.0
+
+trainer:
+  type: fedmm_trainer
+
+train:
+  local_update_steps: 20
+  batch_or_epoch: batch
+  optimizer:
+    type: SGD
+    lr: 0.01
+    momentum: 0.0
+
+eval:
+  freq: 1
+  metrics: ['acc']
+  best_res_update_round_wise_key: test_loss
+  split: ['test']
