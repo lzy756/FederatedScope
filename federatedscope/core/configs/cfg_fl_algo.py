@@ -48,6 +48,7 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedmm.domain_loss_coef = 1.0
     cfg.fedmm.source_ratio = 0.0
     cfg.fedmm.target_ratio = 1.0
+    cfg.fedmm.enable_pd = True
 
     # ---------------------------------------------------------------------- #
     # Personalization related options, pFL

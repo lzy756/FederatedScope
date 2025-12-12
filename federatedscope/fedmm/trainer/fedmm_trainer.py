@@ -72,18 +72,28 @@ class FedMMTrainer(GeneralTorchTrainer):
         tgt_iter = CyclingBatchSampler(target_x, target_y,
                                        target_bs) if target_bs > 0 else None
 
-        optimizer = PDOptimizer(self.ctx.model.parameters(),
-                                lr=self.cfg.train.optimizer.lr,
-                                mu=self.cfg.fedmm.mu)
+        use_pd = self.cfg.fedmm.enable_pd
+        if use_pd:
+            optimizer = PDOptimizer(self.ctx.model.parameters(),
+                                    lr=self.cfg.train.optimizer.lr,
+                                    mu=self.cfg.fedmm.mu)
 
-        if self._prev_global_state is None:
-            self._prev_global_state = {
-                name: param.detach().clone()
-                for name, param in self.ctx.model.named_parameters()
-            }
+            if self._prev_global_state is None:
+                self._prev_global_state = {
+                    name: param.detach().clone()
+                    for name, param in self.ctx.model.named_parameters()
+                }
 
-        optimizer.set_reference(self._prev_global_state, self._param_name_map)
-        optimizer.set_dual(self._get_dual_state(), self._param_name_map)
+            optimizer.set_reference(self._prev_global_state,
+                                    self._param_name_map)
+            optimizer.set_dual(self._get_dual_state(), self._param_name_map)
+        else:
+            opt_cfg = self.cfg.train.optimizer
+            momentum = opt_cfg.get('momentum', 0.0) \
+                if isinstance(opt_cfg, dict) else 0.0
+            optimizer = torch.optim.SGD(self.ctx.model.parameters(),
+                                        lr=opt_cfg.lr,
+                                        momentum=momentum)
 
         total_loss = 0.
         total_steps = 0
@@ -108,16 +118,20 @@ class FedMMTrainer(GeneralTorchTrainer):
             total_steps += 1
 
         model_state = self.get_model_para()
-        shared_state = self._adjust_with_dual(model_state)
+        if use_pd:
+            shared_state = self._adjust_with_dual(model_state)
+        else:
+            shared_state = model_state
         avg_loss = total_loss / total_steps if total_steps > 0 else 0.
         return max(total_samples, 1), shared_state, {'loss': avg_loss}
 
     def update(self, model_parameters, strict=False):
         super().update(model_parameters, strict)
-        self._prev_global_state = {
-            name: param.detach().clone()
-            for name, param in self.ctx.model.named_parameters()
-        }
+        if self.cfg.fedmm.enable_pd:
+            self._prev_global_state = {
+                name: param.detach().clone()
+                for name, param in self.ctx.model.named_parameters()
+            }
 
     def _calc_source_batch(self, source_size, target_size):
         total = source_size + target_size
