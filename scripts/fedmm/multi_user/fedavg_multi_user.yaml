@@ -4,8 +4,8 @@ backend: torch
 federate:
   mode: standalone
   method: fedavg
-  client_num: 4
-  sample_client_num: 4
+  client_num: 20
+  sample_client_num: 20
   total_round_num: 15000
   make_global_eval: True
   ignore_weight: False
@@ -26,15 +26,17 @@ fedmm:
   batch_size: 64
   domain_loss_coef: 1.0
   enable_pd: False
-  client_domain_specs:
-    - target: 0.7
-      source: 0.0
-    - target: 0.3
-      source: 0.0
-    - target: 0.0
-      source: 0.6
-    - target: 0.0
-      source: 0.4
+  domain_groups:
+    - domain: target
+      client_num: 10
+      splitter: lda
+      splitter_args:
+        alpha: 0.5
+    - domain: source
+      client_num: 10
+      splitter: lda
+      splitter_args:
+        alpha: 0.5
 
 trainer:
   type: fedmm_trainer

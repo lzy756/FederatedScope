@@ -51,6 +51,8 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedmm.enable_pd = True
     # Optional list of per-client domain weight specs for multi-client setups.
     cfg.fedmm.client_domain_specs = []
+    # Optional per-domain client group specs, e.g., LDA splits per domain.
+    cfg.fedmm.domain_groups = []
 
     # ---------------------------------------------------------------------- #
     # Personalization related options, pFL

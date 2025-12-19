@@ -6,6 +6,8 @@ import torch
 from torch.utils.data import TensorDataset
 from torchvision.datasets import MNIST
 
+from federatedscope.core.splitters.utils import \
+    dirichlet_distribution_noniid_slice
 from federatedscope.register import register_data
 from federatedscope.core.data import StandaloneDataDict, ClientData
 
@@ -125,6 +127,139 @@ def _normalize_specs(config):
     return normalized
 
 
+def _normalize_domain(value):
+    if value is None:
+        raise ValueError("Domain entry requires `domain` to be specified.")
+    domain = str(value).strip().lower()
+    if domain in ['source', 'src', 's']:
+        return 'source'
+    if domain in ['target', 'tgt', 't']:
+        return 'target'
+    raise ValueError(f"Unrecognized domain spec `{value}`.")
+
+
+def _normalize_domain_groups(config):
+    groups = getattr(config.fedmm, 'domain_groups', None)
+    if not groups:
+        return None
+    normalized = []
+    total_clients = 0
+    seen_domains = set()
+    for raw in groups:
+        domain = _normalize_domain(_maybe_get(raw, 'domain'))
+        if domain in seen_domains:
+            raise ValueError(
+                "Only one group per domain is supported in "
+                "`fedmm.domain_groups`. Found duplicate for "
+                f"`{domain}`.")
+        client_num = int(_maybe_get(raw, 'client_num', 0))
+        if client_num <= 0:
+            continue
+        splitter = _maybe_get(raw, 'splitter', 'uniform')
+        if splitter is None:
+            splitter = 'uniform'
+        splitter = str(splitter).strip().lower()
+        splitter_args = _maybe_get(raw, 'splitter_args', {}) or {}
+        alpha = _maybe_get(raw, 'alpha')
+        if alpha is not None:
+            splitter_args = dict(splitter_args)
+            splitter_args.setdefault('alpha', alpha)
+        normalized.append({
+            'domain': domain,
+            'client_num': client_num,
+            'splitter': splitter,
+            'splitter_args': splitter_args,
+        })
+        total_clients += client_num
+        seen_domains.add(domain)
+    if not normalized:
+        return None
+    if total_clients != config.federate.client_num:
+        raise ValueError(
+            "Sum of `client_num` in `fedmm.domain_groups` must equal "
+            "`federate.client_num`.")
+    return normalized
+
+
+def _empty_like_data(data_x, data_y):
+    shape = (0, ) + tuple(data_x.shape[1:])
+    empty_x = data_x.new_zeros(shape)
+    empty_y = data_y.new_zeros((0, ), dtype=data_y.dtype)
+    return empty_x, empty_y
+
+
+def _slice_tensor_pair(data_x, data_y, indices):
+    if len(indices) == 0:
+        return _empty_like_data(data_x, data_y)
+    idx_tensor = torch.tensor(indices, dtype=torch.long)
+    return data_x[idx_tensor].clone(), data_y[idx_tensor].clone()
+
+
+def _split_with_lda(data_x, data_y, client_num, alpha):
+    labels = data_y.detach().cpu().numpy()
+    idx_slice = dirichlet_distribution_noniid_slice(labels, client_num, alpha)
+    return [_slice_tensor_pair(data_x, data_y, idxs) for idxs in idx_slice]
+
+
+def _split_uniform(data_x, data_y, client_num, domain_name):
+    if data_x.size(0) == 0:
+        return [_empty_like_data(data_x, data_y) for _ in range(client_num)]
+    perm = torch.randperm(data_x.size(0))
+    shuffled_x = data_x[perm]
+    shuffled_y = data_y[perm]
+    weights = [1.0] * client_num
+    return _split_tensor_pair(shuffled_x, shuffled_y, weights, domain_name)
+
+
+def _split_domain_samples(data_x, data_y, group, domain_name):
+    splitter = group.get('splitter', 'uniform')
+    splitter_args = group.get('splitter_args', {}) or {}
+    client_num = group['client_num']
+    if splitter == 'lda':
+        alpha = float(splitter_args.get('alpha', 0.5))
+        return _split_with_lda(data_x, data_y, client_num, alpha)
+    else:
+        weights = splitter_args.get('weights')
+        if weights is not None:
+            if len(weights) != client_num:
+                raise ValueError(
+                    f"`weights` length must match client_num for {domain_name}.")
+            perm = torch.randperm(data_x.size(0)) if data_x.size(0) > 0 \
+                else None
+            shuffled_x = data_x[perm] if perm is not None else data_x
+            shuffled_y = data_y[perm] if perm is not None else data_y
+            return _split_tensor_pair(shuffled_x, shuffled_y, weights,
+                                      domain_name)
+        return _split_uniform(data_x, data_y, client_num, domain_name)
+
+
+def _build_domain_group_clients(config, groups, mnist_source, mnist_source_y,
+                                mnistm_target, mnistm_target_y):
+    clients = {}
+    next_client_id = 1
+    empty_source = _empty_like_data(mnist_source, mnist_source_y)
+    empty_target = _empty_like_data(mnistm_target, mnistm_target_y)
+    for group in groups:
+        domain = group['domain']
+        if domain == 'source':
+            splits = _split_domain_samples(mnist_source, mnist_source_y, group,
+                                           'source')
+            for split in splits:
+                client_cfg = config.clone()
+                clients[next_client_id] = _build_client_data(
+                    client_cfg, split, empty_target)
+                next_client_id += 1
+        else:
+            splits = _split_domain_samples(mnistm_target, mnistm_target_y,
+                                           group, 'target')
+            for split in splits:
+                client_cfg = config.clone()
+                clients[next_client_id] = _build_client_data(
+                    client_cfg, empty_source, split)
+                next_client_id += 1
+    return clients
+
+
 def _calc_counts(total_size, weights, domain_name):
     if total_size == 0:
         return [0] * len(weights)
@@ -200,8 +335,12 @@ def call_fedmm_mnistm(config, client_cfgs):
     if config.data.type.lower() != 'fedmm_mnistm':
         return None
 
-    specs = _normalize_specs(config)
-    if specs is None and config.federate.client_num != 2:
+    domain_groups = _normalize_domain_groups(config)
+    specs = None
+    if domain_groups is None:
+        specs = _normalize_specs(config)
+    if domain_groups is None and specs is None \
+            and config.federate.client_num != 2:
         raise ValueError(
             "FedMM requires `fedmm.client_domain_specs` to build data for "
             "more than 2 clients.")
@@ -219,7 +358,12 @@ def call_fedmm_mnistm(config, client_cfgs):
     num_target = mnistm_train_x.size(0)
 
     client_cfg = config.clone()
-    if specs is not None:
+    if domain_groups is not None:
+        client_data = _build_domain_group_clients(config, domain_groups,
+                                                  mnist_train_x, mnist_train_y,
+                                                  mnistm_train_x,
+                                                  mnistm_train_y)
+    elif specs is not None:
         client_data = _build_multi_client_data(config, specs, mnist_train_x,
                                                mnist_train_y, mnistm_train_x,
                                                mnistm_train_y)
