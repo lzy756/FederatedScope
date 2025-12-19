@@ -49,6 +49,8 @@ def extend_fl_algo_cfg(cfg):
     cfg.fedmm.source_ratio = 0.0
     cfg.fedmm.target_ratio = 1.0
     cfg.fedmm.enable_pd = True
+    # Optional list of per-client domain weight specs for multi-client setups.
+    cfg.fedmm.client_domain_specs = []
 
     # ---------------------------------------------------------------------- #
     # Personalization related options, pFL
