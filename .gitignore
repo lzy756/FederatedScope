@@ -148,3 +148,4 @@ exp/
 pretrained_models/
 
 OfficeHomeDataset_10072016/
+open_clip_vitb16.bin
