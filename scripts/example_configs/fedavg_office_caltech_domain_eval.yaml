@@ -11,7 +11,7 @@ seed: 123
 # Federate settings
 federate:
   mode: 'standalone'
-  client_num: 20
+  client_num: 100
   total_round_num: 200
   method: 'fedavg_domain_eval'  # Use our custom method with domain evaluation
   make_global_eval: True  # Enable server-side evaluation
@@ -22,9 +22,17 @@ federate:
 data:
   root: '/root/data/office_caltech_10'
   type: 'office_caltech'
-  splits: [0.8, 0.1, 0.1]  # train, val, test
+  splits: [0.8, 0.1, 0.1]  # train, val, test (for client data after excluding server test set)
   dirichlet_alpha: 0.1  # Same heterogeneity as cross_domain_adaptive
-  server_test_samples_per_class: 20  # 20 samples/class * 10 classes = 200 samples/domain
+
+  # Server test set configuration - use ratio-based sampling
+  # server_test_ratio: ratio of each domain's data to reserve for server testing
+  # This ensures training data is sufficient even for domains with limited samples
+  server_test_ratio: 0.2  # Use 10% of each domain for server test set
+
+  # Alternative: use fixed number of samples per class (uncomment to use)
+  # server_test_samples_per_class: 20  # 20 samples/class * 10 classes = 200 samples/domain
+  # Note: If both are specified, server_test_samples_per_class takes precedence
 
 # DataLoader settings
 dataloader:

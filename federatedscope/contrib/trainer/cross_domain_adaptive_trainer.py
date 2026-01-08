@@ -5,7 +5,7 @@ On-Demand FL.
 from typing import Optional, TYPE_CHECKING
 import logging
 
-from yacs.config import CfgNode
+from federatedscope.core.configs.config import CN as CfgNode
 
 if TYPE_CHECKING:  # pragma: no cover
     import torch

@@ -171,7 +171,8 @@ def load_office_caltech_domain_data(root,
                                      transform=None,
                                      val_transform=None,
                                      test_transform=None,
-                                     seed=123):
+                                     seed=123,
+                                     exclude_indices=None):
     """
     Load Office-Caltech dataset for a single domain
 
@@ -183,6 +184,7 @@ def load_office_caltech_domain_data(root,
         val_transform: transform for validation data
         test_transform: transform for test data
         seed: random seed
+        exclude_indices: set of indices to exclude (e.g., held-out for server test)
 
     Returns:
         Dictionary with 'train', 'val', 'test' datasets
@@ -210,7 +212,8 @@ def load_office_caltech_domain_data(root,
         transform=transform,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
-        seed=seed
+        seed=seed,
+        exclude_indices=exclude_indices
     )
 
     val_dataset = OfficeCaltech(
@@ -220,7 +223,8 @@ def load_office_caltech_domain_data(root,
         transform=val_transform,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
-        seed=seed
+        seed=seed,
+        exclude_indices=exclude_indices
     )
 
     test_dataset = OfficeCaltech(
@@ -230,7 +234,8 @@ def load_office_caltech_domain_data(root,
         transform=test_transform,
         train_ratio=train_ratio,
         val_ratio=val_ratio,
-        seed=seed
+        seed=seed,
+        exclude_indices=exclude_indices
     )
 
     return {
@@ -241,7 +246,8 @@ def load_office_caltech_domain_data(root,
 
 
 def load_balanced_office_caltech_data(root,
-                                       samples_per_class=10,
+                                       samples_per_class=None,
+                                       test_ratio=None,
                                        transform=None,
                                        seed=123):
     """
@@ -254,8 +260,10 @@ def load_balanced_office_caltech_data(root,
 
     Args:
         root: root directory of the dataset
-        samples_per_class: number of samples per class to sample (default: 10)
-                          Actual samples may be less if class has insufficient data
+        samples_per_class: number of samples per class to sample (fixed number)
+                          If None, will use test_ratio instead
+        test_ratio: ratio of samples to use for server test (e.g., 0.1 for 10%)
+                   Only used if samples_per_class is None
         transform: transform to apply to images
         seed: random seed for sampling
 
@@ -264,8 +272,21 @@ def load_balanced_office_caltech_data(root,
         - 'datasets': dict mapping domain names to balanced test datasets
         - 'excluded_indices': dict mapping domain names to sets of excluded indices
                              (to be passed to OfficeCaltech when loading client data)
+
+    Note:
+        - If both samples_per_class and test_ratio are None, defaults to test_ratio=0.1
+        - If samples_per_class is specified, it takes precedence over test_ratio
     """
     np.random.seed(seed)
+
+    # Determine sampling strategy
+    if samples_per_class is None and test_ratio is None:
+        test_ratio = 0.1  # Default to 10%
+        logger.info(f"Using default test_ratio={test_ratio}")
+    elif samples_per_class is not None:
+        logger.info(f"Using fixed samples_per_class={samples_per_class}")
+    else:
+        logger.info(f"Using test_ratio={test_ratio}")
 
     if transform is None:
         transform = transforms.Compose([
@@ -333,11 +354,17 @@ def load_balanced_office_caltech_data(root,
                     continue
 
                 # Determine how many samples to take
-                n_samples = min(samples_per_class, len(class_image_paths))
-
-                if len(class_image_paths) < samples_per_class:
-                    logger.info(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
-                               f"only {len(class_image_paths)} samples available (requested {samples_per_class})")
+                if samples_per_class is not None:
+                    # Fixed number per class
+                    n_samples = min(samples_per_class, len(class_image_paths))
+                    if len(class_image_paths) < samples_per_class:
+                        logger.warning(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
+                                     f"only {len(class_image_paths)} samples available (requested {samples_per_class})")
+                else:
+                    # Ratio-based sampling
+                    n_samples = max(1, int(len(class_image_paths) * test_ratio))
+                    logger.debug(f"Domain {domain}, class {OfficeCaltech.CLASSES[class_idx]}: "
+                               f"sampling {n_samples}/{len(class_image_paths)} ({test_ratio*100:.1f}%)")
 
                 # Random sample
                 sampled_paths = list(np.random.choice(class_image_paths, size=n_samples, replace=False))
@@ -401,6 +428,7 @@ def load_balanced_office_caltech_data(root,
         'datasets': balanced_datasets,
         'excluded_indices': excluded_indices_per_domain
     }
+
 
 
 

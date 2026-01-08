@@ -384,12 +384,19 @@ class CrossDomainAdaptiveServer(FedLSAServer):
 
         logger.info("Loading balanced test datasets for server-side evaluation...")
 
-        # Get samples per class from config, default to 10
-        try:
-            samples_per_class = self._cfg.data.server_test_samples_per_class
-        except (AttributeError, KeyError):
-            samples_per_class = 10
-            logger.info(f"Using default samples_per_class={samples_per_class} for server test data")
+        # Support both fixed samples_per_class and ratio-based test_ratio
+        samples_per_class_cfg = getattr(self._cfg.data, 'server_test_samples_per_class', 0)
+        test_ratio_cfg = getattr(self._cfg.data, 'server_test_ratio', 0.1)
+
+        # Determine which sampling mode to use
+        if samples_per_class_cfg > 0:
+            samples_per_class = samples_per_class_cfg
+            test_ratio = None
+            logger.info(f"Using samples_per_class={samples_per_class} for server test data")
+        else:
+            samples_per_class = None
+            test_ratio = test_ratio_cfg if test_ratio_cfg > 0 else 0.1
+            logger.info(f"Using test_ratio={test_ratio} for server test data")
 
         # Load balanced test data based on dataset type
         dataset_type = self._cfg.data.type.lower()
@@ -399,6 +406,7 @@ class CrossDomainAdaptiveServer(FedLSAServer):
             result = load_balanced_office_caltech_data(
                 root=self._cfg.data.root,
                 samples_per_class=samples_per_class,
+                test_ratio=test_ratio,
                 transform=None,  # Will use default transform
                 seed=self._cfg.seed
             )
@@ -407,6 +415,7 @@ class CrossDomainAdaptiveServer(FedLSAServer):
             result = load_balanced_pacs_data(
                 root=self._cfg.data.root,
                 samples_per_class=samples_per_class,
+                test_ratio=test_ratio,
                 transform=None,  # Will use default transform
                 seed=self._cfg.seed
             )
@@ -709,6 +718,7 @@ def call_cross_domain_adaptive_worker(method: str):
 
 
 register_worker('cross_domain_adaptive', call_cross_domain_adaptive_worker)
+
 
 
 

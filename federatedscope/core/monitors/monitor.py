@@ -63,11 +63,17 @@ class Monitor(object):
 
         # Obtain the whether the larger the better
         self.round_wise_update_key = cfg.eval.best_res_update_round_wise_key
+
+        # Extract the metric name without mode prefix
+        update_key = self.round_wise_update_key  # Default to the full key
         for mode in ['train', 'val', 'test']:
             if mode in self.round_wise_update_key:
                 update_key = self.round_wise_update_key.split(f'{mode}_')[1]
+                break
+
         assert update_key in self.metric_calculator.eval_metric, \
-            f'{update_key} not found in metrics.'
+            f'{update_key} not found in metrics. ' \
+            f'Available metrics: {list(self.metric_calculator.eval_metric.keys())}'
         self.the_larger_the_better = self.metric_calculator.eval_metric[
             update_key][1]
 
@@ -711,11 +717,14 @@ class Monitor(object):
                             for mode in ['train', 'val', 'test']:
                                 if mode in key:
                                     _key = key.split(f'{mode}_')[1]
-                                    if self.metric_calculator.eval_metric[
-                                            _key][1]:
-                                        cur_result = max(cur_result)
-                                    else:
-                                        cur_result = min(cur_result)
+                                    # Check if this metric is registered
+                                    if _key in self.metric_calculator.eval_metric:
+                                        if self.metric_calculator.eval_metric[
+                                                _key][1]:
+                                            cur_result = max(cur_result)
+                                        else:
+                                            cur_result = min(cur_result)
+                                    break
                         best_result[key] = cur_result
 
         if update_best_this_round:

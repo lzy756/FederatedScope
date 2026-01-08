@@ -29,8 +29,17 @@ def extend_data_cfg(cfg):
     cfg.data.dirichlet_alpha = 0.0  # Dirichlet concentration parameter for
     # class heterogeneity. 0.0 = uniform split, 0.1 = highly heterogeneous,
     # 0.5 = moderate heterogeneity, 1.0+ = more balanced
-    cfg.data.server_test_samples_per_class = 10  # Number of samples per class
-    # for server-side balanced test sets (used in domain-specific evaluation)
+    cfg.data.min_samples_per_client = 5  # Minimum samples each client must have
+    # after Dirichlet split. Samples will be redistributed from clients with
+    # extra samples to ensure this minimum. Set to 0 to disable.
+
+    # Server test set sampling configuration (for domain-specific evaluation)
+    # Option 1: Fixed number per class (takes precedence if > 0)
+    cfg.data.server_test_samples_per_class = 0  # e.g., 20 means 20 samples/class
+    # Set to 0 to use ratio-based sampling instead
+    # Option 2: Ratio-based sampling (used if server_test_samples_per_class <= 0)
+    cfg.data.server_test_ratio = 0.1  # e.g., 0.1 means 10% of each domain
+    # Set to 0.0 to disable ratio-based sampling (will use default 0.1)
 
     cfg.data.transform = [
     ]  # transform for x, eg. [['ToTensor'], ['Normalize', {'mean': [

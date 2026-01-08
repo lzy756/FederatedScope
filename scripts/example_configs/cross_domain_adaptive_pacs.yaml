@@ -7,7 +7,7 @@ seed: 123
 federate:
   mode: 'standalone'
   client_num: 50
-  total_round_num: 200
+  total_round_num: 100
   method: 'cross_domain_adaptive'
   make_global_eval: True
   share_local_model: False
@@ -18,10 +18,11 @@ data:
   type: 'pacs'
   splits: [0.8, 0.1, 0.1]
   dirichlet_alpha: 0.1
-  server_test_samples_per_class: 40  # 20 samples/class * 7 classes = 140 samples/domain
+  min_samples_per_client: 5  # Minimum training samples per client (auto-redistributed from clients with extra samples)
+  server_test_samples_per_class: 40  # 40 samples/class * 7 classes = 280 samples/domain
 
 dataloader:
-  batch_size: 8
+  batch_size: 32
   shuffle: True
   num_workers: 0
 
@@ -72,9 +73,9 @@ fedlsa:
 
 ondemfl:
   enable: True
-  pretrain_rounds: 150
-  ondemand_rounds: 50
-  subset_size: 30
+  pretrain_rounds: 100
+  ondemand_rounds: 100
+  subset_size: 50
   weight_scheme: 'ratio_times_size'
   min_ratio: 1e-4
   nnls_max_iter: 500

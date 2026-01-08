@@ -4,7 +4,7 @@ from typing import Iterable, List, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from yacs.config import CfgNode as CN
+from federatedscope.core.configs.config import CN
 
 from federatedscope.register import register_model
 

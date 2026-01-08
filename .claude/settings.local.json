@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git clone:*)",
+      "Bash(dir:*)",
+      "Bash(pip show:*)",
+      "Bash(findstr:*)",
+      "Bash(pip install:*)",
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Projects\\\\2025CVPR_GGEUR\" -Recurse -Filter \"*.py\")",
+      "Bash(Select-Object FullName)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(Remove-Item -Force \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\worker\\\\ggeur_client.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\worker\\\\ggeur_server.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\trainer\\\\ggeur_trainer.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\trainer\\\\ggeur_simple_trainer.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\data\\\\ggeur_data.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\ggeur_register.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\ggeur_preprocessing.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\core\\\\configs\\\\cfg_ggeur.py\" -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item -Force -Recurse \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\data_augmentation\" -ErrorAction SilentlyContinue)",
+      "Bash(Remove-Item -Force \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\utils\\\\clip_extractor.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\utils\\\\covariance_aggregator.py\", \"D:\\\\Projects\\\\FederatedScope\\\\federatedscope\\\\contrib\\\\utils\\\\geometry_utils.py\" -ErrorAction SilentlyContinue)",
+      "Bash(rm:*)",
+      "Bash(PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python:*)",
+      "Bash(set:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

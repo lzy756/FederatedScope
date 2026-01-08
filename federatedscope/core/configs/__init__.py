@@ -25,5 +25,6 @@ base_configs = [
     'cfg_data', 'cfg_fl_setting', 'cfg_model', 'cfg_training', 'cfg_evaluation'
 ]
 for base_config in base_configs:
-    all_sub_configs.pop(all_sub_configs.index(base_config))
-    all_sub_configs.insert(0, base_config)
+    if base_config in all_sub_configs:
+        all_sub_configs.pop(all_sub_configs.index(base_config))
+        all_sub_configs.insert(0, base_config)

@@ -13,7 +13,7 @@ else:
 
 import logging
 
-from yacs.config import CfgNode
+from federatedscope.core.configs.config import CN as CfgNode
 
 from federatedscope.core.auxiliaries.optimizer_builder import get_optimizer
 from federatedscope.core.trainers.context import CtxVar
